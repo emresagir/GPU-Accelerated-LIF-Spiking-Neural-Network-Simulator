@@ -1,0 +1,197 @@
+\documentclass[11pt,a4paper]{article}
+
+% Packages
+\usepackage[utf8]{inputenc}
+\usepackage[margin=1in]{geometry}
+\usepackage{graphicx}
+\usepackage{amsmath}
+\usepackage{hyperref}
+\usepackage{float}
+\usepackage{subcaption}
+\usepackage{listings}
+\usepackage{color}
+\usepackage{booktabs}
+\usepackage[utf8]{inputenc}
+\usepackage[numbers]{natbib} 
+
+
+
+
+\definecolor{dkgreen}{rgb}{0,0.6,0}
+\definecolor{gray}{rgb}{0.5,0.5,0.5}
+\definecolor{mauve}{rgb}{0.58,0,0.82}
+\lstset{frame=tb,
+  language=python,
+  aboveskip=3mm,
+  belowskip=3mm,
+  showstringspaces=false,
+  columns=flexible,
+  basicstyle={\small\ttfamily},
+  numbers=none,
+  numberstyle=\tiny\color{gray},
+  keywordstyle=\color{blue},
+  commentstyle=\color{dkgreen},
+  stringstyle=\color{mauve},
+  breaklines=true,
+  breakatwhitespace=true,
+  tabsize=3
+}
+
+\title{GPU-Accelerated LIF Spiking Neuron Networks Simulator}
+\author{Your Name \\ Student ID}
+
+
+\date{\today}
+
+\begin{document}
+
+
+\maketitle
+
+\section{Introduction}
+
+The Project is done to implement more compact and lightweight 
+SNN simulator compared to the ones already available. 
+
+The neuron implementation is numerical instead of analog. 
+Firstly, the neuron is calculated, 
+then the value being comapared to the threshold voltage, and resulting a spike. 
+The refractory phase will start for the spiked neuron.
+Lastly, the synaptic updates are being calculated as exponential decay per timestep. 
+
+\section{Implementation}
+\subsection{LIF}
+The discrete-time implementation of the Leaky Integrate-and-Fire (LIF) model 
+as discussed by Stan and Rhodes \cite{stan2024learning} allows for 
+efficient sequence modeling in SNNs.
+
+The parameters in the equations are: \\
+
+\begin{tabular}{r l}
+  $u[t]$ & Membrane voltage (potential) at time step $t$. \\[0.5em]
+  $\beta$ & Membrane decay factor. \\[0.5em]
+  $s[t]$ & Spike indicator. \\[0.5em]
+  $\theta$ & Firing threshold voltage. \\[0.5em]
+  $i[t]$ & Input current.
+\end{tabular}
+\\
+
+The membrane potential update is being done with the equation~\ref{eq:lif_integration}. 
+
+The Reset mechanism is given in equation~\ref{eq:lif_reset} as soft reset. 
+Instead of resetting to a default value, 
+the membrane voltage is being calculated directly.
+This prevent warp divergence if the hard reset chosen, 
+with condition structure will be introduced.
+
+Lastly, spike generation is being calculated with equation~\ref{eq:lif_spike}. 
+The spike is being decided with comparison between membrane voltage and threshold.
+
+% Membrane Potential Update (Integration)
+\begin{equation}
+u[t] = \beta u[t-1] + (1 - \beta) i[t]
+\label{eq:lif_integration}
+\end{equation}
+
+% Reset Mechanism (Soft Reset)
+\begin{equation}
+u[t] \leftarrow u[t] - s[t-1]\theta
+\label{eq:lif_reset}
+\end{equation}
+
+% Spike Generation (Heaviside Step Function)
+\begin{equation}
+s[t] = \Theta(u[t] - \theta) = 
+\begin{cases} 
+1, & \text{if } u[t] > \theta \\
+0, & \text{otherwise}
+\end{cases}
+\label{eq:lif_spike}
+\end{equation}
+
+% Definition of Beta (Decay Factor)
+where the decay factor $\beta$ is defined by the membrane time constant $\tau$ and simulation time step $\Delta t$:
+\begin{equation}
+\beta = \exp\left(-\frac{\Delta t}{\tau}\right)
+\end{equation}
+
+
+
+
+
+
+% NOTES: Not related to the report, 
+%Implementation steps
+% 1- apply reset from previous spike, 
+% the membrane voltage changes with the spike being 1 or 0
+% u[t] = u[t-1] - s[t-1] * θ
+% So if there is no spike in the previous one, no decrease
+% This way there is no conditional check (branching) that will 
+% make implementation harder. This is soft reset.
+
+% After reset
+% 2- Integrate Membrane voltage
+% u[t] = β u[t] + (1 - β) i[t]
+% new membrane potential current timestep.
+
+% 3- Now the threshold check for the next step.
+% s[t] = Θ(u[t] - θ)
+% this will provide if the spike occured or not.
+% And this will be used for later step.
+
+
+
+
+
+
+
+
+
+
+
+% Below is latex template.
+\section{Testing}
+
+\begin{figure}[h]
+\centering
+\begin{lstlisting}
+ Example Code
+\end{lstlisting}
+\caption{Transformation function definitons}
+\label{fig:transformation_defs}
+\end{figure}
+
+
+\graphicspath{{images}}
+\begin{figure}[H]
+  \centering
+  %\includegraphics[width=0.7\textwidth]{Pareto_of_default_image_provided.png}
+  \caption{Pareto graph of different image transformation techniques}
+  \label{fig:pareto_graph1}
+\end{figure}
+
+
+
+\begin{table}[htbp]
+\centering
+\caption{Power saving statistics for each transformation}
+\label{tab:power_saving_stats}
+\begin{tabular}{lrrr}
+\toprule
+\textbf{Transform} &
+\textbf{Mean PS (\%)} &
+\textbf{Min PS (\%)} &
+\textbf{Max PS (\%)} \\
+\midrule
+Bright scale & 17.18 & 16.85 & 18.46 \\
+Histogram    & -5.53 & -135.09 & 30.56 \\
+Hungry blue  & 6.43 & 2.78 & 20.24 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% Place this where you want the bibliography to appear
+\bibliographystyle{plain} % Styles: plain, unsrt, alpha, etc.
+\bibliography{references}
+
+\end{document}
