@@ -1,0 +1,129 @@
+\documentclass[11pt,a4paper]{article}
+
+% Packages
+\usepackage[utf8]{inputenc}
+\usepackage[margin=1in]{geometry}
+\usepackage{graphicx}
+\usepackage{amsmath}
+\usepackage{hyperref}
+\usepackage{float}
+\usepackage{subcaption}
+\usepackage{listings}
+\usepackage{color}
+\usepackage{booktabs}
+\usepackage[utf8]{inputenc}
+\usepackage[numbers]{natbib} 
+\usepackage{hyperref}
+
+
+
+
+\definecolor{dkgreen}{rgb}{0,0.6,0}
+\definecolor{gray}{rgb}{0.5,0.5,0.5}
+\definecolor{mauve}{rgb}{0.58,0,0.82}
+\lstset{frame=tb,
+  language=python,
+  aboveskip=3mm,
+  belowskip=3mm,
+  showstringspaces=false,
+  columns=flexible,
+  basicstyle={\small\ttfamily},
+  numbers=none,
+  numberstyle=\tiny\color{gray},
+  keywordstyle=\color{blue},
+  commentstyle=\color{dkgreen},
+  stringstyle=\color{mauve},
+  breaklines=true,
+  breakatwhitespace=true,
+  tabsize=3
+}
+
+\title{GPU-Accelerated LIF Spiking Neuron Networks Simulator \\ Proposal}
+\author{Emre Sagir  s339049}
+
+
+\date{\today}
+
+\begin{document}
+
+
+\maketitle
+
+\section{Introduction}
+
+The project will be implemented as a compact and lightweight 
+from-scratch SNN simulator with GPU-acceleration.
+The network model is decided to be single-layer 
+recurrent LIF SNN.
+
+\section{Implementation}
+The network is a second order system with a 
+single layer and recurrent dense connectivity.
+There is two different model as neuron and synapse.
+Current simulator focusing on discrete-time dense SNNs 
+to create a solid baseline before continuing with sparsity configuration.
+
+For neuron model, the discrete-time implementation of the Leaky Integrate-and-Fire (LIF) model 
+as discussed by Stan and Rhodes \cite{stan2024learning} allows for 
+efficient sequence modeling in SNNs. 
+The implemented neuron models equations given in the Appendix. The synapse model is decided as current-based exponential 
+synapse model which it's equation given in appendix as well.
+
+The baseline cpu implementation is done and can be accessed in my 
+\href{https://github.com/emresagir/GPU-Accelerated-LIF-Spiking-Neural-Network-Simulator}{github repository}.
+
+
+
+\section{Roadmap}
+The single thread C implementation will act as a baseline and correctness reference, 
+pytorch version is also implemented for benchmark. 
+The basic gpu version implementation will have one thread for each neuron.
+Then optimized version will focus on memory access patterns, shared-memory tiling, and decreasing kernel launch overhead.
+
+
+\section{Benchmark}
+The implemented versions will be compared each other as cpu, basic-gpu, optimized-gpu. 
+On the other hand, pytorch and an established simulator version (will be decided later) will be also compared.
+Lastly, profiling will be done with Nsight to analyze the time per-step, occupancy, memory bandwidth.
+
+
+
+
+% Place this where you want the bibliography to appear
+\bibliographystyle{plain} % Styles: plain, unsrt, alpha, etc.
+\bibliography{references}
+
+\section{Appendix}
+\subsection{Neuron Model Equations}
+% Membrane Potential Update (Integration)
+\begin{equation}
+u[t] = \beta u[t-1] + (1 - \beta) i[t]
+\label{eq:lif_integration}
+\end{equation}
+
+% Reset Mechanism (Soft Reset)
+\begin{equation}
+u[t] \leftarrow u[t] - s[t-1]\theta
+\label{eq:lif_reset}
+\end{equation}
+
+% Spike Generation (Heaviside Step Function)
+\begin{equation}
+s[t] = \Theta(u[t] - \theta) = 
+\begin{cases} 
+1, & \text{if } u[t] > \theta \\
+0, & \text{otherwise}
+\end{cases}
+\label{eq:lif_spike}
+\end{equation}
+
+
+\subsection{Synapse Model Equations}
+\begin{equation}
+g_i[t] = \alpha\, g_i[t-1] + \sum_j w_{ji}\, s_j[n]
+\label{eq:discrete_synapse}
+\end{equation}
+
+
+
+\end{document}
