@@ -4,10 +4,10 @@ import numpy as np
 import time
 
 # Config (match with C)
-N = 1024           # neurons 
-T = 3000           # timesteps
-# N = 8           # neurons 
-# T = 20           # timesteps
+# N = 1024           # neurons 
+# T = 3000           # timesteps
+N = 8           # neurons 
+T = 20           # timesteps
 dt = 1e-3
 tau_m = 20e-3
 tau_s = 5e-3

@@ -12,6 +12,7 @@ uint8_t s[N];
 uint8_t s_prev[N];
 
 // For test
+#define TEST 1
 float u_trace[T * N];
 float g_trace[T * N];
 uint8_t s_trace[T * N];
@@ -32,6 +33,7 @@ void init(){
     }
 
     //Test 
+    #if TEST == 1
     float sum_ext_spikes = 0.0f;
     for (int t = 0; t < T; ++t) {
         for (int i = 0; i < N; ++i) {
@@ -40,6 +42,7 @@ void init(){
     }
     printf("ext spike mean = %f\n",
        (float)sum_ext_spikes / (T*N));
+    #endif
 }
 
 
@@ -91,18 +94,21 @@ int main(void)
         }
 
         // For test
+        #if TEST == 1
         for (int i = 0; i < N; ++i) {
             u_trace[t * N + i] = u[i];
             g_trace[t * N + i] = g[i];
             s_trace[t * N + i] = s[i];
-}
+        }
+        #endif
     }
     // For time benchmarking
     clock_gettime(CLOCK_MONOTONIC_RAW, &finish);
     sub_timespec(start, finish, &delta);
-    printf("%d.%.9ld\n", (int)delta.tv_sec, delta.tv_nsec);
+    printf("The simulation took, %d.%.9ld\n", (int)delta.tv_sec, delta.tv_nsec);
     
     printf("Simulation finished.\n");
+    #if TEST == 1
     //  For accuracy test
     FILE *f_u = fopen("u_c.bin", "wb");
     FILE *f_g = fopen("g_c.bin", "wb");
@@ -113,5 +119,6 @@ int main(void)
     fclose(f_u);
     fclose(f_g);
     fclose(f_s);
+    #endif
     return 0;
 }

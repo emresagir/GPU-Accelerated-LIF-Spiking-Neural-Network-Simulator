@@ -9,11 +9,11 @@
 #include <unistd.h>
 
 
-#define N 1024      // number of neurons
-#define T 3000      // timesteps
+// #define N 1024      // number of neurons
+// #define T 3000      // timesteps
 
-// #define N 8      // number of neurons
-// #define T 20      // timesteps
+#define N 8      // number of neurons
+#define T 20      // timesteps
 
 #define dt          1e-3f
 #define tau_m       20e-3f   // membrane time constant

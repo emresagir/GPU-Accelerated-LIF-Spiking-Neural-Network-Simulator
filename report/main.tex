@@ -60,9 +60,7 @@ The refractory phase will start for the spiked neuron.
 Lastly, the synaptic updates are being calculated as exponential decay per timestep. 
 
 
-
-\section{Implementation}
-\subsection{LIF}
+\section{Neuron Model}
 The discrete-time implementation of the Leaky Integrate-and-Fire (LIF) model 
 as discussed by Stan and Rhodes \cite{stan2024learning} allows for 
 efficient sequence modeling in SNNs.
@@ -119,7 +117,7 @@ where the decay factor $\beta$ is defined by the membrane time constant $\tau$ a
 
 
 
-\subsection{Synapse Model}
+\section{Synapse Model}
 The synapse model is decided as current-based exponential synapse model.
 The equation of the exponential synapse model is given in the equation~\ref{eq:discrete_synapse}.\\
 
@@ -178,8 +176,71 @@ The sparsity can be added later.
 % this will provide if the spike occured or not.
 % And this will be used for later step.
 
+\section{Implementation}
+\subsection{CPU Model}
+  The CPU implementation is being done with 
+  the given neuron and synapse model definitions in previous chapters.
+  It is written in C. 
+  The main time loop given in the figure~\ref{fig:C_impl}. \\
+  
+  To check the correctness of the C model, 
+  Pytorch version is also implemented with the same model definitons.
+  The comparison test done. 
+  Firstly, the poisson (input) spikes are saved while running
+  the pytorch version. Then those spikes are imported to the C version. 
+  This way the model expected to be run exactly the same. 
+  Meanwhile membrane potentials (u[t]) and spikes (s[t]) 
+  are being saved in both versions.
+  At the end those saved values are being compared with a script,
+  to check the correctness of the C implementation. 
+  Comparison output is given in the figure~\ref{fig:comp_w_pytorch}. 
+  As we can see from the given figure, the difference is pretty close to zero,
+  with a little error margin because of the difference in float calculations.
+
+  \begin{figure}[h]
+\centering
+\begin{lstlisting}
+/* Time loop */
+    for (int t = 0; t < T; ++t) {
+
+        /* Synapse update */
+        for (int i = 0; i < N; ++i) {
+            float input_current = 0.0f;
+            input_current += ext_spikes[t*N + i] * ext_weight;
+            for (int j = 0; j < N; ++j) {
+                input_current += Wflat[i*N + j] * s_prev[j];
+            }
+            g[i] = alpha * g[i] + input_current;
+        }
+        /* Neuron Update */
+        for (int i = 0; i < N; ++i) {
+            u[i] -= s_prev[i] * theta;
+            u[i] = beta * u[i] + (1.0f - beta) * g[i];
+            s[i] = (u[i] > theta);
+        }
+        /* Copy spikes */
+        for (int i = 0; i < N; ++i) {
+            s_prev[i] = s[i];
+        }
+\end{lstlisting}
+\caption{Time loop of the C implementation}
+\label{fig:C_impl}
+\end{figure}
 
 
+\graphicspath{{images}}
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.7\textwidth]{comp_C_vs_torch.png}
+  \caption{Comparison output of C and pytorch versions}
+  \label{fig:comp_w_pytorch}
+\end{figure}
+
+
+
+\section{Testing}
+
+\subsection{Method}
 
 
 
@@ -189,7 +250,7 @@ The sparsity can be added later.
 
 
 % Below is latex template.
-\section{Testing}
+
 
 \begin{figure}[h]
 \centering
