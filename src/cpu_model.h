@@ -7,6 +7,7 @@
 #include <stdint.h>
 #include <time.h>
 #include <unistd.h>
+#include <string.h>
 
 
 // #define N 1024      // number of neurons
@@ -27,5 +28,6 @@
 // Prototypes
 void loadw_f32(const char *fn, size_t count, float arr[]);
 void load_ext_spikes(const char *fn, uint8_t arr[]);
+void sub_timespec(struct timespec t1, struct timespec t2, struct timespec *td);
 
 #endif /* CPU_MODEL_H */
