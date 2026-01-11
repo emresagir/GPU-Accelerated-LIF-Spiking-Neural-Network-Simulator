@@ -382,3 +382,10 @@ dkms.conf
 
 # debug information files
 *.dwo
+
+
+*.npy
+*.u8
+*.f32
+
+torch/venv/

@@ -4,10 +4,10 @@ import numpy as np
 import time
 
 # Config (match with C)
-# N = 1024           # neurons 
-# T = 1000           # timesteps
-N = 8           # neurons 
-T = 20           # timesteps
+N = 1024           # neurons 
+T = 3000           # timesteps
+# N = 8           # neurons 
+# T = 20           # timesteps
 dt = 1e-3
 tau_m = 20e-3
 tau_s = 5e-3
@@ -57,7 +57,7 @@ u_trace = torch.zeros((T, N), dtype=torch.float32, device=device)
 g_trace = torch.zeros((T, N), dtype=torch.float32, device=device)
 s_trace = torch.zeros((T, N), dtype=torch.uint8, device=device)
 
-t0 = time.time()
+t0 = time.perf_counter()
 for t in range(T):
 
     # recurrent input
@@ -89,7 +89,7 @@ for t in range(T):
 
 # profiling
 torch.cuda.synchronize() if device.type == "cuda" else None
-t1 = time.time()
+t1 = time.perf_counter()
 print(f"Completed {T} steps, time = {t1-t0:.4f}s, ms/step = {(t1-t0)/T*1000:.4f}")
 
 # Save final traces or spikes for comparison with C

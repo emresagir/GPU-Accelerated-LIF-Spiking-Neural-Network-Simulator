@@ -16,6 +16,9 @@ float u_trace[T * N];
 float g_trace[T * N];
 uint8_t s_trace[T * N];
 
+// For timing benchmark 
+struct timespec start, finish, delta;
+
 void init(){
     /* Access Wflat[i*N + j] */
     loadw_f32("../torch/W_post_pre.f32", (size_t)N * (size_t)N, Wflat);
@@ -46,6 +49,8 @@ int main(void)
     const float alpha = expf(-dt / tau_s);
 
     init();
+
+    clock_gettime(CLOCK_MONOTONIC_RAW, &start);
 
     /* Time loop */
     for (int t = 0; t < T; ++t) {
@@ -92,9 +97,13 @@ int main(void)
             s_trace[t * N + i] = s[i];
 }
     }
-
+    // For time benchmarking
+    clock_gettime(CLOCK_MONOTONIC_RAW, &finish);
+    sub_timespec(start, finish, &delta);
+    printf("%d.%.9ld\n", (int)delta.tv_sec, delta.tv_nsec);
+    
     printf("Simulation finished.\n");
-    // Test
+    //  For accuracy test
     FILE *f_u = fopen("u_c.bin", "wb");
     FILE *f_g = fopen("g_c.bin", "wb");
     FILE *f_s = fopen("s_c.bin", "wb");

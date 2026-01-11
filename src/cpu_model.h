@@ -5,19 +5,23 @@
 #include <math.h>
 #include <stdlib.h>
 #include <stdint.h>
+#include <time.h>
+#include <unistd.h>
 
 
-// #define N 1024      // number of neurons
-// #define T 1000      // timesteps
+#define N 1024      // number of neurons
+#define T 3000      // timesteps
 
-#define N 8      // number of neurons
-#define T 20      // timesteps
+// #define N 8      // number of neurons
+// #define T 20      // timesteps
 
 #define dt          1e-3f
 #define tau_m       20e-3f   // membrane time constant
 #define tau_s       5e-3f    // synaptic time constant
 #define theta       1.0f
 #define ext_weight  10.2f 
+
+#define NS_PER_SECOND 1000000000 
 
 
 // Prototypes
