@@ -387,6 +387,5 @@ dkms.conf
 *.npy
 *.u8
 *.f32
-*.bin
 
 torch/venv/
