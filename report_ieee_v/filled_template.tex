@@ -1,0 +1,288 @@
+\documentclass[conference]{IEEEtran}
+\IEEEoverridecommandlockouts
+
+\usepackage{cite}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{algorithmic}
+\usepackage{graphicx}
+\usepackage{textcomp}
+\usepackage{xcolor}
+
+\usepackage[utf8]{inputenc}
+\usepackage[margin=1in]{geometry}
+\usepackage{float}
+\usepackage{subcaption}
+\usepackage{listings}
+\usepackage{color}
+\usepackage{booktabs}
+\usepackage[numbers]{natbib}
+
+\definecolor{dkgreen}{rgb}{0,0.6,0}
+\definecolor{gray}{rgb}{0.5,0.5,0.5}
+\definecolor{mauve}{rgb}{0.58,0,0.82}
+\lstset{frame=tb,
+  language=C,
+  aboveskip=3mm,
+  belowskip=3mm,
+  showstringspaces=false,
+  columns=flexible,
+  basicstyle={\small\ttfamily},
+  numbers=none,
+  numberstyle=\tiny\color{gray},
+  keywordstyle=\color{blue},
+  commentstyle=\color{dkgreen},
+  stringstyle=\color{mauve},
+  breaklines=true,
+  breakatwhitespace=true,
+  tabsize=3
+}
+
+\title{GPU-Accelerated LIF Spiking Neuron Networks Simulator}
+
+\author{\IEEEauthorblockN{Emre Sagir}
+\IEEEauthorblockA{\textit{Computer Engineering (GPU Programming Class)} \\
+\textit{Politecnico di Torino}\\
+Torino, Italy \\
+s339049@studenti.polito.it}
+}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+This project implements a compact and lightweight spiking neural network simulator using a discrete-time leaky integrate-and-fire neuron model and exponential synapse dynamics. The implementation is developed in C and CUDA, then validated against a PyTorch reference model. The goal is to demonstrate a GPU-oriented design for spiking neural networks while keeping the simulator numerically consistent with the CPU and Python versions.
+\end{abstract}
+
+\begin{IEEEkeywords}
+spiking neural networks, leaky integrate-and-fire, GPU programming, CUDA, synaptic decay, simulator
+\end{IEEEkeywords}
+
+\section{Introduction}
+
+The project is done to implement a more compact and lightweight SNN simulator compared to the ones already available.
+
+The neuron implementation is numerical instead of analog. Firstly, the neuron is calculated, then the value is compared to the threshold voltage, resulting in a spike. The refractory phase starts for the spiked neuron. Lastly, the synaptic updates are calculated as exponential decay per timestep.
+
+\section{Neuron Model}
+
+The discrete-time implementation of the Leaky Integrate-and-Fire (LIF) model allows for efficient sequence modeling in SNNs.
+
+The parameters in the equations are:
+
+\begin{tabular}{r l}
+  $u[t]$ & Membrane voltage (potential) at time step $t$. \\[0.5em]
+  $\beta$ & Membrane decay factor. \\[0.5em]
+  $s[t]$ & Spike indicator. \\[0.5em]
+  $\theta$ & Firing threshold voltage. \\[0.5em]
+  $i[t]$ & Input current.
+\end{tabular}
+
+The membrane potential update is done with the equation~\ref{eq:lif_integration}.
+
+The reset mechanism is given in equation~\ref{eq:lif_reset} as soft reset. Instead of resetting to a default value, the membrane voltage is calculated directly. This prevents warp divergence if a hard reset is chosen, because an if condition structure would be introduced.
+
+Lastly, spike generation is calculated with equation~\ref{eq:lif_spike}. The spike is decided by comparing membrane voltage and threshold.
+
+\begin{equation}
+u[t] = \beta u[t-1] + (1 - \beta) i[t]
+\label{eq:lif_integration}
+\end{equation}
+
+\begin{equation}
+u[t] \leftarrow u[t] - s[t-1]\theta
+\label{eq:lif_reset}
+\end{equation}
+
+\begin{equation}
+s[t] = \Theta(u[t] - \theta) =
+\begin{cases}
+1, & \text{if } u[t] > \theta \\
+0, & \text{otherwise}
+\end{cases}
+\label{eq:lif_spike}
+\end{equation}
+
+where the decay factor $\beta$ is defined by the membrane time constant $\tau$ and simulation time step $\Delta t$:
+
+\begin{equation}
+\beta = \exp\left(-\frac{\Delta t}{\tau}\right)
+\end{equation}
+
+\section{Synapse Model}
+
+The SNN simulator could have been implemented without the synapse model, where synapses would be only weights without leakage. However, to show the power of the GPU and increase complexity, the synapse model was implemented.
+
+The synapse model is a current-based exponential synapse model. The equation of the exponential synapse model is given in equation~\ref{eq:discrete_synapse}.
+
+Parameters for the synapse model are:
+
+\begin{tabular}{r l}
+  $\alpha$ & Synaptic decay factor ($e^{-\Delta t / \tau_s}$). \\[0.5em]
+  $w_{ji}$ & Weight from neuron $j$ to $i$. \\[0.5em]
+  $s_j[t]$ & Spike indicator from presynaptic neuron $j$. \\[0.5em]
+  $g_i[t]$ & Postsynaptic current state (decaying memory). \\[0.5em]
+  $u_i[t]$ & Membrane potential of neuron $i$. \\[0.5em]
+  $\beta$ & Membrane decay factor ($e^{-\Delta t / \tau_m}$). \\[0.5em]
+  $\theta$ & Spike threshold.
+\end{tabular}
+
+\begin{equation}
+g_i[t] = \alpha\, g_i[t-1] + \sum_j w_{ji}\, s_j[t]
+\label{eq:discrete_synapse}
+\end{equation}
+
+Connecting this synapse model with the neuron model results in equation~\ref{eq:updated_neuron_model}. The input current is changed with the postsynaptic current state, which is calculated in equation~\ref{eq:discrete_synapse}.
+
+\begin{equation}
+u_i[t] = \beta u_i[t-1] + (1 - \beta) g_i[t]
+\label{eq:updated_neuron_model}
+\end{equation}
+
+The current implementation of the model is dense. Sparsity can be added later, but it would introduce a high level of complexity.
+
+\section{Implementation}
+
+\subsection{CPU Model}
+
+The CPU implementation is based on the neuron and synapse model definitions from the previous sections. It is written in C. The main time loop is given in Figure~\ref{fig:C_impl}.
+
+For the synaptic update, the external input current is calculated with the given external spikes and weights, then, with a second for loop, the recurrent connections are accumulated into the input current; lastly, the synaptic decay is applied.
+
+For the neuron update, a soft reset is applied if there was a spike in the previous timestep; then the leakage and integration of the input current are applied. Lastly, a spike is recorded if the membrane potential is higher than the threshold.
+
+\begin{figure}[htbp]
+\centering
+\begin{lstlisting}
+/* Time loop */
+for (int t = 0; t < T; ++t) {
+
+    /* Synapse update */
+    for (int i = 0; i < N; ++i) {
+        float input_current = 0.0f;
+        input_current += ext_spikes[t*N + i] * ext_weight;
+        for (int j = 0; j < N; ++j) {
+            input_current += Wflat[i*N + j] * s_prev[j];
+        }
+        g[i] = alpha * g[i] + input_current;
+    }
+
+    /* Neuron Update */
+    for (int i = 0; i < N; ++i) {
+        u[i] -= s_prev[i] * theta;
+        u[i] = beta * u[i] + (1.0f - beta) * g[i];
+        s[i] = (u[i] > theta);
+    }
+
+    /* Copy spikes */
+    for (int i = 0; i < N; ++i) {
+        s_prev[i] = s[i];
+    }
+}
+\end{lstlisting}
+\caption{Time loop of the CPU implementation}
+\label{fig:C_impl}
+\end{figure}
+
+\subsubsection{Testing}
+
+To check the correctness of the C model, a PyTorch version is also implemented with the same model definitions. The comparison test is done.
+
+Firstly, the Poisson input spikes are saved while running the PyTorch version. Then those spikes are imported to the C version. This way, the model is expected to run exactly the same. Meanwhile, membrane potentials ($u[t]$) and spikes ($s[t]$) are saved in both versions. At the end, those saved values are compared with a script to check the correctness of the C implementation.
+
+A comparison output is shown in Figure~\ref{fig:comp_w_pytorch}. The difference is close to zero, with a small error margin because of the difference in float calculations.
+
+\begin{figure}[H]
+  \centering
+  \fbox{\parbox[c][0.28\textheight][c]{0.7\textwidth}{\centering Figure placeholder: CPU vs. PyTorch comparison}}
+  \caption{Comparison output of CPU and PyTorch versions}
+  \label{fig:comp_w_pytorch}
+\end{figure}
+
+\subsection{Basic GPU Model}
+
+The basic GPU model implementation is done after the CPU model, to have a middle ground before optimizing this version.
+
+There are two separate kernels because there is a data dependency between the synapse and neuron update. The kernels need to be separate because the input current accumulation is done in the synapse update, and it is used right after for the neuron update.
+
+The synapse kernel is given in Figure~\ref{fig:Synapse_Basic_GPU_impl}. With the GPU version it is clearly visible that now there is only one for loop, compared to two for loops of the CPU model.
+
+\begin{figure}[h]
+\centering
+\begin{lstlisting}
+__global__ void synapse_kernel(...)
+{
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= n) return;
+
+    // Accumulation
+    float acc = (float)ext_step[i] * ext_w;
+
+    // Adding recurrent input from all previous spikes.
+    int row = i * n;
+    for (int j = 0; j < n; ++j)
+        acc += W[row + j] * (float)s_prev[j];
+
+    // Decay
+    g[i] = alpha * g[i] + acc;
+}
+\end{lstlisting}
+\caption{Synapse kernel of the basic GPU implementation}
+\label{fig:Synapse_Basic_GPU_impl}
+\end{figure}
+
+The neuron kernel is given in Figure~\ref{fig:Neuron_Basic_GPU_impl}. After the kernel indexing is done, the membrane potential is updated and the spikes are recorded.
+
+\begin{figure}[h]
+\centering
+\begin{lstlisting}
+__global__ void neuron_kernel(...)
+{
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= n) return;
+
+    // Membrane Update (Soft Reset)
+    float ui = u[i] - (float)s_prev[i] * thresh;
+    ui = beta * ui + (1.0f - beta) * g[i];
+
+    // Spike generation
+    uint8_t si = (ui > thresh) ? 1 : 0;
+    u[i] = ui;
+    s[i] = si;
+}
+\end{lstlisting}
+\caption{Neuron kernel of the basic GPU implementation}
+\label{fig:Neuron_Basic_GPU_impl}
+\end{figure}
+
+In this naive version, there are a couple of problems that are apparent. There is no kernel fusion; two separate kernels introduce overhead. The for loop in the synapse kernel is sequential; no shared memory or tiling is used.
+
+\subsubsection{Testing}
+
+Testing for the basic GPU version is done with another script. At this step, a Python grapher script has been written to demonstrate the neuron parameters with respect to the timesteps. Three different versions of the same SNN model with the same weights and external spikes are compared: Python (PyTorch), CPU, and GPU versions.
+
+The best way to ensure that the SNN computations are correct and align with the Python reference is to compare the membrane potential with respect to timesteps. In Figure~\ref{fig:membrane_comp_Torch_CPU_GPU}, spikes are happening in the correct timesteps and the membrane potentials are aligned.
+
+\begin{figure}[H]
+  \centering
+  \fbox{\parbox[c][0.28\textheight][c]{0.82\textwidth}{\centering Figure placeholder: membrane potential comparison}}
+  \caption{Membrane potential comparison of PyTorch, CPU and GPU versions}
+  \label{fig:membrane_comp_Torch_CPU_GPU}
+\end{figure}
+
+The next step is to show the absolute error of the GPU, how much it diverges from the reference. In Figure~\ref{fig:absolute_error_torch_GPU} the absolute error of the first eight neurons is shown. The errors are zero for most of the neurons and almost zero for others; this small difference could be the result of the float representation difference between the different systems.
+
+\begin{figure}[H]
+  \centering
+  \fbox{\parbox[c][0.28\textheight][c]{0.82\textwidth}{\centering Figure placeholder: absolute error comparison}}
+  \caption{Absolute error between the PyTorch and GPU versions}
+  \label{fig:absolute_error_torch_GPU}
+\end{figure}
+
+\section{Testing}
+
+\subsection{Method}
+
+% The provided report ends here.
+
+\end{document}
