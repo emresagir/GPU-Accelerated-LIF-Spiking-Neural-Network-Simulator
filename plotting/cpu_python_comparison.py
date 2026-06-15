@@ -2,9 +2,9 @@
 import numpy as np
 import matplotlib.pyplot as plt
 
-# Match these with your simulation
-N = 1024
-T = 3000
+# Match these 
+N = 8
+T = 20
 
 # File paths
 PY_U = "../torch/u_trace.npy"
@@ -22,8 +22,8 @@ GPU_S = "../gpu_version/s_gpu.bin"
 # ----------------------------
 # Plot controls
 # ----------------------------
-show_T = 300     # first X timesteps to display
-show_N = 32      # first Y neurons to display
+show_T = 20     # first X timesteps to display
+show_N = 8      # first Y neurons to display
 max_neurons_plot = 4   # for line plots of u, show a few neurons
 
 def load_npy(path):

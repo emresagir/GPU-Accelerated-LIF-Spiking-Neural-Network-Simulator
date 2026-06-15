@@ -53,7 +53,7 @@ int main(void)
 
     init();
 
-    clock_gettime(CLOCK_MONOTONIC_RAW, &start);
+    //clock_gettime(CLOCK_MONOTONIC_RAW, &start);
 
     /* Time loop */
     for (int t = 0; t < T; ++t) {
@@ -102,10 +102,10 @@ int main(void)
         }
         #endif
     }
-    // For time benchmarking
-    clock_gettime(CLOCK_MONOTONIC_RAW, &finish);
-    sub_timespec(start, finish, &delta);
-    printf("The simulation took, %d.%.9ld\n", (int)delta.tv_sec, delta.tv_nsec);
+    // For time benchmarking (THIS DOES NOT WORK ON WINDOWS, needs linux env.)
+    //clock_gettime(CLOCK_MONOTONIC_RAW, &finish);
+    //sub_timespec(start, finish, &delta);
+    //printf("The simulation took, %d.%.9ld\n", (int)delta.tv_sec, delta.tv_nsec);
     
     printf("Simulation finished.\n");
     #if TEST == 1
