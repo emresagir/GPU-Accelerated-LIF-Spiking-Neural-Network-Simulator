@@ -21,7 +21,7 @@
 \definecolor{gray}{rgb}{0.5,0.5,0.5}
 \definecolor{mauve}{rgb}{0.58,0,0.82}
 \lstset{frame=tb,
-  language=python,
+  language=C,
   aboveskip=3mm,
   belowskip=3mm,
   showstringspaces=false,
@@ -82,7 +82,7 @@ The Reset mechanism is given in equation~\ref{eq:lif_reset} as soft reset.
 Instead of resetting to a default value, 
 the membrane voltage is being calculated directly.
 This prevent warp divergence if the hard reset chosen, 
-with condition structure will be introduced.
+because the if condition structure will be introduced.
 
 Lastly, spike generation is being calculated with equation~\ref{eq:lif_spike}. 
 The spike is being decided with comparison between membrane voltage and threshold.
@@ -118,6 +118,9 @@ where the decay factor $\beta$ is defined by the membrane time constant $\tau$ a
 
 
 \section{Synapse Model}
+Firstly, the SNN simulator could have been without the synapse model. The synapses could have been just the weights without the leakage. 
+But for the sake of showing the power of the GPU and increasing complexity, the synapse model was implemented.
+
 The synapse model is decided as current-based exponential synapse model.
 The equation of the exponential synapse model is given in the equation~\ref{eq:discrete_synapse}.\\
 
@@ -150,7 +153,7 @@ u_i[t] = \beta u_i[t-1] + (1 - \beta) g_i[t]
 
 
 Current implementation of the model is dense. 
-The sparsity can be added later.
+The sparsity can be added later, but will introduce a high level of complexity.
 
 
 
@@ -178,24 +181,15 @@ The sparsity can be added later.
 
 \section{Implementation}
 \subsection{CPU Model}
-  The CPU implementation is being done with 
-  the given neuron and synapse model definitions in previous chapters.
-  It is written in C. 
-  The main time loop given in the figure~\ref{fig:C_impl}. \\
+The CPU implementation is being done with the given neuron and synapse model definitions
+in the previous chapters. It is written in C. The main time loop is given in Figure 1.~\ref{fig:C_impl}. 
   
-  To check the correctness of the C model, 
-  Pytorch version is also implemented with the same model definitons.
-  The comparison test done. 
-  Firstly, the poisson (input) spikes are saved while running
-  the pytorch version. Then those spikes are imported to the C version. 
-  This way the model expected to be run exactly the same. 
-  Meanwhile membrane potentials (u[t]) and spikes (s[t]) 
-  are being saved in both versions.
-  At the end those saved values are being compared with a script,
-  to check the correctness of the C implementation. 
-  Comparison output is given in the figure~\ref{fig:comp_w_pytorch}. 
-  As we can see from the given figure, the difference is pretty close to zero,
-  with a little error margin because of the difference in float calculations.
+  For the synaptic update, the external input current is calculated with the given external spikes and weights, then, with a second for loop, 
+  the recurrent connections are accumulated into the input current; lastly, the synaptic decay is being applied.
+  
+  For the neuron update, a soft reset is applied if there was a spike in the previous timestep;
+  then the leakage and integration of the input current are applied. Lastly, a spike 
+  is recorded if the membrane potential is higher than the threshold. \\
 
   \begin{figure}[h]
 \centering
@@ -223,17 +217,125 @@ The sparsity can be added later.
             s_prev[i] = s[i];
         }
 \end{lstlisting}
-\caption{Time loop of the C implementation}
+\caption{Time loop of the CPU implementation}
 \label{fig:C_impl}
 \end{figure}
 
+
+\subsubsection{Testing}
+To check the correctness of the C model, 
+Pytorch version is also implemented with the same model definitions. 
+The comparison test is done.
+
+  Firstly, the Poisson (input) spikes are saved while running the PyTorch version. 
+  Then those spikes are imported to the C version. 
+  This way, the model is expected to be run exactly the same. 
+  Meanwhile, membrane potentials (u[t]) and spikes (s[t]) are being saved in both versions. 
+  At the end, those saved values are compared with a script to check the correctness of the C implementation.
+
+  Comparison output is given in the figure~\ref{fig:comp_w_pytorch}. 
+  As we can see from the given figure, the difference is pretty close to zero,
+  with a little error margin because of the difference in float calculations.
 
 \graphicspath{{images}}
 \begin{figure}[H]
   \centering
   \includegraphics[width=0.7\textwidth]{comp_C_vs_torch.png}
-  \caption{Comparison output of C and pytorch versions}
+  \caption{Comparison output of CPU and pytorch versions}
   \label{fig:comp_w_pytorch}
+\end{figure}
+
+
+\subsection{Basic GPU Model}
+
+The Basic GPU Model implementation is done after the CPU model, to have a middle ground before optimizing this version.
+
+There are two separate kernels because there is a data dependency between the synapse and neuron update. 
+The kernels need to be separate because the input current accumulation is done in the synapse update, and it is being used right after for the neuron update. 
+
+The synapse kernel is given at the Figure\ref{fig:Synapse_Basic_GPU_impl}.
+With the GPU version it is clearly visible that now there is only one for loop, compared to two for loops of the CPU model.
+
+
+  \begin{figure}[h]
+\centering
+\begin{lstlisting}
+  __global__ void synapse_kernel(...)
+  {
+      int i = blockIdx.x * blockDim.x + threadIdx.x;
+      if (i >= n) return;
+
+      // Accumulation
+      float acc = (float)ext_step[i] * ext_w;
+
+      // Adding recurrent input from all previous spikes.
+      int row = i * n;
+      for (int j = 0; j < n; ++j)
+          acc += W[row + j] * (float)s_prev[j];
+
+      // Decay 
+      g[i] = alpha * g[i] + acc;
+  }
+\end{lstlisting}
+\caption{Synapse Kernel of the Basic GPU implementation}
+\label{fig:Synapse_Basic_GPU_impl}
+\end{figure}
+
+The neuron kernel is given at the Figure~\ref{fig:Neuron_Basic_GPU_impl}. After the kernel indexing is done, the membrane potential being updated and the spikes are being recorded.
+
+  \begin{figure}[h]
+\centering
+\begin{lstlisting}
+  __global__ void neuron_kernel(...)
+  {
+      int i = blockIdx.x * blockDim.x + threadIdx.x;
+      if (i >= n) return;
+
+      // Membrane Update (Soft Reset)
+      float ui = u[i] - (float)s_prev[i] * thresh;
+      ui = beta * ui + (1.0f - beta) * g[i];
+
+      // Spike generation
+      uint8_t si = (ui > thresh) ? 1 : 0;
+      u[i] = ui;
+      s[i] = si;
+  }
+\end{lstlisting}
+\caption{Neuron Kernel of the Basic GPU implementation}
+\label{fig:Neuron_Basic_GPU_impl}
+\end{figure}
+
+In this naive version, there are couple of problems that are apparent. There is no kernel fusion; two seperate kernel introduces an overhead.
+The for loop in the synapse kernel is sequential; no shared memory or tiling is used.
+
+\subsubsection{Testing}
+
+Testing for the basic GPU version is done with another script; 
+at this step, a Python grapher script has been written to demonstrate the neuron parameters with respect to the timesteps.
+Three different versions of the same SNN model with the same weights and external spikes are being compared: Python (torch), CPU, and GPU versions.
+
+The best way to ensure that the SNN computations are correct and align with the Python (Torch) reference is to compare the membrane potential with respect to timesteps. 
+In Figure~\ref{fig:membrane_comp_Torch_CPU_GPU}, spikes are happening in the correct timesteps and the membrane potentials are aligned perfectly.
+
+\graphicspath{{images}}
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.95\textwidth]{Python_C_GPU_membrane_comparison.png}
+  \caption{Membrane Potential comperison of Torch, CPU and GPU versions}
+  \label{fig:membrane_comp_Torch_CPU_GPU}
+\end{figure}
+
+The next step would be to show the absolute error of the GPU, how much it diverges from the reference. 
+In Figure~\ref{fig:absolute_error_torch_GPU} absolute error of the first eight neurons being shown. 
+The errors are zero for most of the neurons and almost zero for others; 
+this small difference could be the result of the float representation difference between the different systems.
+
+\graphicspath{{images}}
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.8\textwidth]{Python_GPU_Absolute_error.png}
+  \caption{Absolute error between the Torch and GPU versions}
+  \label{fig:absolute_error_torch_GPU}
 \end{figure}
 
 
