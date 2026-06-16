@@ -5,7 +5,7 @@
 #include <cuda_runtime.h>
 #include "gpu_basic.h"
 
-#define TEST 1
+#define TEST 0
 
 #define CUDA_CHECK(call) do {                                          \
     cudaError_t err = call;                                            \
@@ -37,11 +37,15 @@ __global__ void synapse_kernel(
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= n) return;
 
+    // Accumulation 
     float acc = (float)ext_step[i] * ext_w;
+    
+    // Adding recurrent input from all previous spikes.
     int row = i * n;
     for (int j = 0; j < n; ++j)
         acc += W[row + j] * (float)s_prev[j];
 
+    //Decay
     g[i] = alpha * g[i] + acc;
 }
 
@@ -68,17 +72,22 @@ __global__ void neuron_kernel(
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= n) return;
 
+    // Membrane Update (Soft Reset)
     float ui = u[i] - (float)s_prev[i] * thresh;
     ui = beta * ui + (1.0f - beta) * g[i];
 
+    // Spike generation
     uint8_t si = (ui > thresh) ? 1 : 0;
     u[i] = ui;
     s[i] = si;
 
+    #if TEST == 1
+    //Trace loggings will be used in graphs
     int idx = t_idx * n + i;
     u_trace[idx] = ui;
     g_trace[idx] = g[i];
     s_trace[idx] = si;
+    #endif
 }
 
 static void load_f32_file(const char* path, float* buf, size_t count) {
@@ -116,6 +125,11 @@ int main(void) {
     float*   d_u, *d_g;
     uint8_t* d_s_a, *d_s_b;   /* ping-pong buffers for s / s_prev */
     uint8_t* d_ext;            /* all T*N ext spikes, uploaded once */
+            
+    /* Trace buffers initialized to NULL so they always exist for the compiler */
+    float* d_u_trace = NULL;
+    float* d_g_trace = NULL;
+    uint8_t* d_s_trace = NULL;
 
     CUDA_CHECK(cudaMalloc((void**)&d_W,   W_sz  * sizeof(float)));
     CUDA_CHECK(cudaMalloc((void**)&d_u,   N     * sizeof(float)));
@@ -131,12 +145,11 @@ int main(void) {
     CUDA_CHECK(cudaMemset(d_s_a, 0, N * sizeof(uint8_t)));
     CUDA_CHECK(cudaMemset(d_s_b, 0, N * sizeof(uint8_t)));
 
-    /* Trace buffers */
-    float*   d_u_trace, *d_g_trace;
-    uint8_t* d_s_trace;
+    #if TEST == 1
     CUDA_CHECK(cudaMalloc((void**)&d_u_trace, TN_sz * sizeof(float)));
     CUDA_CHECK(cudaMalloc((void**)&d_g_trace, TN_sz * sizeof(float)));
     CUDA_CHECK(cudaMalloc((void**)&d_s_trace, TN_sz * sizeof(uint8_t)));
+    #endif
 
     int threads = 256;
     int blocks  = (N + threads - 1) / threads;
@@ -193,10 +206,17 @@ int main(void) {
 #endif
 
     CUDA_CHECK(cudaFree(d_W));
-    CUDA_CHECK(cudaFree(d_u));   CUDA_CHECK(cudaFree(d_g));
-    CUDA_CHECK(cudaFree(d_s_a)); CUDA_CHECK(cudaFree(d_s_b));
+    CUDA_CHECK(cudaFree(d_u));   
+    CUDA_CHECK(cudaFree(d_g));
+    CUDA_CHECK(cudaFree(d_s_a)); 
+    CUDA_CHECK(cudaFree(d_s_b));
     CUDA_CHECK(cudaFree(d_ext));
-    CUDA_CHECK(cudaFree(d_u_trace)); CUDA_CHECK(cudaFree(d_g_trace)); CUDA_CHECK(cudaFree(d_s_trace));
+
+    #if TEST == 1
+    CUDA_CHECK(cudaFree(d_u_trace)); 
+    CUDA_CHECK(cudaFree(d_g_trace)); 
+    CUDA_CHECK(cudaFree(d_s_trace));
+    #endif
 
     free(h_W); free(h_ext);
     return 0;
