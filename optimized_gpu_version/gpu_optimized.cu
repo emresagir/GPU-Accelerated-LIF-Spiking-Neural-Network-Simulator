@@ -3,9 +3,9 @@
 #include <stdint.h>
 #include <math.h>
 #include <cuda_runtime.h>
-#include "gpu_basic.h"
+#include "gpu_optimized.h"
 
-#define TEST 0
+#define TEST 1
 
 #define CUDA_CHECK(call) do {                                          \
     cudaError_t err = call;                                            \
@@ -16,77 +16,68 @@
     }                                                                  \
 } while(0)
 
-/*
- * Synaptic update:
- *   g[i] = alpha * g[i] + ext_spikes[t*N + i] * ext_weight
- *                        + sum_j( W[i*N + j] * s_prev[j] )
- *
- */
-__global__ void synapse_kernel(
+// Number of neurons processed per shared-memory tile.
+// Must divide evenly into blockDim.x (both are 256 here).
+#define TILE_W 256
+
+
+__global__ void fused_snn_kernel(
     const float*   __restrict__ W,
     const uint8_t* __restrict__ s_prev,
     const uint8_t* __restrict__ ext_step,
-    float* g,
-    float alpha,
-    float ext_w,
-    int n
-)
-{
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
-    if (i >= n) return;
-
-    // Accumulation 
-    float acc = (float)ext_step[i] * ext_w;
-    
-    // Adding recurrent input from all previous spikes.
-    int row = i * n;
-    for (int j = 0; j < n; ++j)
-        acc += W[row + j] * (float)s_prev[j];
-
-    //Decay
-    g[i] = alpha * g[i] + acc;
-}
-
-/*
- * Neuron update:
- *   soft-reset: u[i] -= s_prev[i] * theta
- *   integrate:  u[i]  = beta * u[i] + (1 - beta) * g[i]
- *   spike:      s[i]  = u[i] > theta
- */
-__global__ void neuron_kernel(
     float*   u,
-    const float*   __restrict__ g,
-    const uint8_t* __restrict__ s_prev,
+    float*   g,
     uint8_t* s,
     float*   u_trace,
     float*   g_trace,
     uint8_t* s_trace,
-    float beta,
-    float thresh,
-    int n,
-    int t_idx
+    float alpha, float ext_w,
+    float beta,  float thresh,
+    int n, int t_idx
 )
 {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
+    __shared__ uint8_t s_tile[TILE_W];
+
+    float ext_contrib = (i < n) ? (float)ext_step[i] * ext_w : 0.0f;
+    float acc = ext_contrib;
+    const float* W_row = (i < n) ? W + (size_t)i * n : NULL;
+
+    for (int tile_start = 0; tile_start < n; tile_start += TILE_W) {
+        int j_load = tile_start + threadIdx.x;
+        s_tile[threadIdx.x] = (j_load < n) ? s_prev[j_load] : 0;
+        __syncthreads();
+
+        if (i < n) {
+            int tile_end = min(TILE_W, n - tile_start);
+            for (int k = 0; k < tile_end; ++k)
+                acc += W_row[tile_start + k] * (float)s_tile[k];
+        }
+        __syncthreads();
+    }
+
     if (i >= n) return;
 
-    // Membrane Update (Soft Reset)
-    float ui = u[i] - (float)s_prev[i] * thresh;
-    ui = beta * ui + (1.0f - beta) * g[i];
+    float gi = alpha * g[i] + acc;
+    g[i] = gi; 
 
-    // Spike generation
+    /* Membrane update. */
+    float ui = u[i] - (float)s_prev[i] * thresh;
+    ui = beta * ui + (1.0f - beta) * gi;
+
     uint8_t si = (ui > thresh) ? 1 : 0;
     u[i] = ui;
     s[i] = si;
 
-    #if TEST == 1
-    //Trace loggings will be used in graphs
+#if TEST == 1
     int idx = t_idx * n + i;
     u_trace[idx] = ui;
-    g_trace[idx] = g[i];
+    g_trace[idx] = gi;
     s_trace[idx] = si;
-    #endif
+#endif
 }
+
+/* ── file helpers ── */
 
 static void load_f32_file(const char* path, float* buf, size_t count) {
     FILE* f = fopen(path, "rb");
@@ -118,20 +109,19 @@ int main(void) {
     load_f32_file("../torch/W_post_pre.f32", h_W,   W_sz);
     load_u8_file ("../torch/ext_spikes.u8",  h_ext, TN_sz);
 
-    /* Device buffers: weights, state, full ext-spike array */
+    /* Device buffers */
     float*   d_W;
     float*   d_u, *d_g;
-    uint8_t* d_s_a, *d_s_b;   /* ping-pong buffers for s / s_prev */
-    uint8_t* d_ext;            /* all T*N ext spikes, uploaded once */
-            
-    /* Trace buffers initialized to NULL so they always exist for the compiler */
-    float* d_u_trace = NULL;
-    float* d_g_trace = NULL;
+    uint8_t* d_s_a, *d_s_b;
+    uint8_t* d_ext;
+
+    float*   d_u_trace = NULL;
+    float*   d_g_trace = NULL;
     uint8_t* d_s_trace = NULL;
 
     CUDA_CHECK(cudaMalloc((void**)&d_W,   W_sz  * sizeof(float)));
     CUDA_CHECK(cudaMalloc((void**)&d_u,   N     * sizeof(float)));
-    CUDA_CHECK(cudaMalloc((void**)&d_g,   N     * sizeof(float)));
+    CUDA_CHECK(cudaMalloc((void**)&d_g,   N     * sizeof(float)));  
     CUDA_CHECK(cudaMalloc((void**)&d_s_a, N     * sizeof(uint8_t)));
     CUDA_CHECK(cudaMalloc((void**)&d_s_b, N     * sizeof(uint8_t)));
     CUDA_CHECK(cudaMalloc((void**)&d_ext, TN_sz * sizeof(uint8_t)));
@@ -143,16 +133,19 @@ int main(void) {
     CUDA_CHECK(cudaMemset(d_s_a, 0, N * sizeof(uint8_t)));
     CUDA_CHECK(cudaMemset(d_s_b, 0, N * sizeof(uint8_t)));
 
-    #if TEST == 1
+#if TEST == 1
     CUDA_CHECK(cudaMalloc((void**)&d_u_trace, TN_sz * sizeof(float)));
     CUDA_CHECK(cudaMalloc((void**)&d_g_trace, TN_sz * sizeof(float)));
     CUDA_CHECK(cudaMalloc((void**)&d_s_trace, TN_sz * sizeof(uint8_t)));
-    #endif
+#endif
 
-    int threads = 256;
+    /*
+     * Block size must equal TILE_W so that each thread loads exactly one
+     * element of s_prev into the shared-memory tile.
+     */
+    int threads = TILE_W;   /* == 256 */
     int blocks  = (N + threads - 1) / threads;
 
-    /* s_prev = d_s_a (zeros), s = d_s_b; swap each step */
     uint8_t* d_s_prev = d_s_a;
     uint8_t* d_s      = d_s_b;
 
@@ -164,13 +157,15 @@ int main(void) {
     for (int t = 0; t < T; ++t) {
         uint8_t* d_ext_step = d_ext + (size_t)t * N;
 
-        synapse_kernel<<<blocks, threads>>>(d_W, d_s_prev, d_ext_step,
-                                            d_g, alpha, ext_weight, N);
-        neuron_kernel <<<blocks, threads>>>(d_u, d_g, d_s_prev, d_s,
-                                            d_u_trace, d_g_trace, d_s_trace,
-                                            beta, theta, N, t);
 
-        /* swap ping-pong pointers */
+        fused_snn_kernel<<<blocks, threads>>>(
+            d_W, d_s_prev, d_ext_step,
+            d_u, d_g, d_s,
+            d_u_trace, d_g_trace, d_s_trace,
+            alpha, ext_weight, beta, theta, N, t
+        );
+
+        /* Swap ping-pong pointers */
         uint8_t* tmp = d_s_prev;
         d_s_prev = d_s;
         d_s      = tmp;
@@ -192,9 +187,9 @@ int main(void) {
     CUDA_CHECK(cudaMemcpy(h_g_trace, d_g_trace, TN_sz * sizeof(float),   cudaMemcpyDeviceToHost));
     CUDA_CHECK(cudaMemcpy(h_s_trace, d_s_trace, TN_sz * sizeof(uint8_t), cudaMemcpyDeviceToHost));
 
-    FILE* f_u = fopen("u_gpu.bin", "wb");
-    FILE* f_g = fopen("g_gpu.bin", "wb");
-    FILE* f_s = fopen("s_gpu.bin", "wb");
+    FILE* f_u = fopen("u_gpu_opt.bin", "wb");
+    FILE* f_g = fopen("g_gpu_opt.bin", "wb");
+    FILE* f_s = fopen("s_gpu_opt.bin", "wb");
     fwrite(h_u_trace, sizeof(float),   TN_sz, f_u);
     fwrite(h_g_trace, sizeof(float),   TN_sz, f_g);
     fwrite(h_s_trace, sizeof(uint8_t), TN_sz, f_s);
@@ -204,17 +199,17 @@ int main(void) {
 #endif
 
     CUDA_CHECK(cudaFree(d_W));
-    CUDA_CHECK(cudaFree(d_u));   
+    CUDA_CHECK(cudaFree(d_u));
     CUDA_CHECK(cudaFree(d_g));
-    CUDA_CHECK(cudaFree(d_s_a)); 
+    CUDA_CHECK(cudaFree(d_s_a));
     CUDA_CHECK(cudaFree(d_s_b));
     CUDA_CHECK(cudaFree(d_ext));
 
-    #if TEST == 1
-    CUDA_CHECK(cudaFree(d_u_trace)); 
-    CUDA_CHECK(cudaFree(d_g_trace)); 
+#if TEST == 1
+    CUDA_CHECK(cudaFree(d_u_trace));
+    CUDA_CHECK(cudaFree(d_g_trace));
     CUDA_CHECK(cudaFree(d_s_trace));
-    #endif
+#endif
 
     free(h_W); free(h_ext);
     return 0;
