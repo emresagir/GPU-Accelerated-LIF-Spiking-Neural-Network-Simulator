@@ -26,7 +26,7 @@
   belowskip=3mm,
   showstringspaces=false,
   columns=flexible,
-  basicstyle={\small\ttfamily},
+  basicstyle={\scriptsize\ttfamily},
   numbers=none,
   numberstyle=\tiny\color{gray},
   keywordstyle=\color{blue},
@@ -248,7 +248,7 @@ The comparison test is done.
 
 \section{Basic GPU Model}
 
-\subsection{Implementation}
+\subsection{Implementation} \label{basic_problems_mentioned}
 The Basic GPU Model implementation is done after the CPU model, to have a middle ground before optimizing this version.
 
 There are two separate kernels because there is a data dependency between the synapse and neuron update. 
@@ -306,8 +306,12 @@ The neuron kernel is given at the Figure~\ref{fig:Neuron_Basic_GPU_impl}. After 
 \label{fig:Neuron_Basic_GPU_impl}
 \end{figure}
 
-In this naive version, there are a couple of problems that are apparent. There is no kernel fusion; two seperate kernel introduces an overhead.
-The for loop in the synapse kernel is sequential; no shared memory or tiling is used.
+In this naive version, there are a couple of problems that are apparent. There is two seperate kernel introduces an overhead.
+And the inner loop of the synapse kernel reads the full s\_prev for every neuron.
+But the biggest problem is that the Weights are being loaded without a coalesced access. 
+The weight access is done with W[i*n + j], can be seen in the Figure~\ref{fig:Synapse_Basic_GPU_impl}. 
+Consecutive threads are not accessing the consecutive memory addresses. 
+This introduces the biggest bottleneck. 
 
 \subsection{Testing}
 Testing for the basic GPU version is done with another script; 
@@ -339,6 +343,108 @@ this small difference could be the result of the float representation difference
 \end{figure}
 
 \section{Optimized GPU Model}
+\subsection{Implementation}
+The performance problems of the basic GPU version are previously mentioned in the section~\ref{basic_problems_mentioned}. 
+
+The two kernel design choices were for reducing complexity. These two kernels are fused together to optimize the code.
+By fusing these two kernels into one, the kernel launch overhead at every timestep was reduced to half.
+Moreover, the $g_i[t]$ Postsynaptic current was written to global memory and then read by the next kernel at every timestep. 
+With the fusion, the $g_i[t]$ lives in the registers, and reduces the latency.
+
+Second problem, reading the full s\_prev[] array (previous timestep spike array) for every neuron. 
+All neurons use the same data, so with shared memory tiling, the data is being loaded into the shared memory to be used by other threads in the block, making this process faster.
+
+Lastly the biggest bottleneck, the un-coalesced access of the weight matrix. 
+The optimal way would be preprocessing the weight matrix with a transpose, and having the access with W[j*n + i]. 
+But in this project the focus is using GPU optimization techniques, thus float4 vectorized load is introduced.
+
+In the Figure~\ref{fig:Fused_Optimized_GPU_impl}, the fused kernel is shown with the mentioned optimizations: fused kernel and memory tiling.
+The kernel first computes the external contribution of the external spikes and the weights. 
+Then, with the memory tiling, the recurrent connections are accumulated into the acc variable.
+The tile size was decided as 256, and the block size was also decided as 256; this way, all the threads are loading the data from the global memory to the shared memory tile.
+In the figure~\ref{fig:thread and block calc}, this thread and block count calculation is shown. 
+Lastly, the decay and the membrane potential update are done.
+
+  \begin{figure}[h]
+\centering
+\begin{lstlisting}
+__global__ void fused_snn_kernel(...)
+{
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+
+    __shared__ uint8_t s_tile[TILE_W];
+
+    float ext_contrib = (i < n) ? (float)ext_step[i] * ext_w : 0.0f;
+
+    float acc = ext_contrib;
+
+    const float* W_row = (i < n) ? W + (size_t)i * n : NULL;
+
+    for (int tile_start = 0; tile_start < n; tile_start += TILE_W) {
+        int j_load = tile_start + threadIdx.x;
+        s_tile[threadIdx.x] = (j_load < n) ? s_prev[j_load] : 0;
+        __syncthreads();
+
+        if (i < n) {
+            int tile_end = min(TILE_W, n - tile_start);
+            for (int k = 0; k < tile_end; ++k)
+                acc += W_row[tile_start + k] * (float)s_tile[k];
+        }
+        __syncthreads();
+    }
+
+    if (i >= n) return;
+
+    float gi = alpha * g[i] + acc;
+    g[i] = gi; 
+
+    float ui = u[i] - (float)s_prev[i] * thresh;
+    ui = beta * ui + (1.0f - beta) * gi;
+
+    uint8_t si = (ui > thresh) ? 1 : 0;
+    u[i] = ui;
+    s[i] = si;
+}
+\end{lstlisting}
+\caption{Fused Kernel of the Optimized GPU implementation}
+\label{fig:Fused_Optimized_GPU_impl}
+\end{figure}
+
+  \begin{figure}[h]
+\centering
+\begin{lstlisting}
+    int threads = TILE_W;   /* == 256 */
+    int blocks  = (N + threads - 1) / threads;
+\end{lstlisting}
+\caption{Thread and Block calculations}
+\label{fig:thread and block calc}
+\end{figure}
+
+
+\subsection{Testing}
+
+The plotter script expanded to include the optimized version in the plots as well. 
+Ensuring that the optimized version performs with the same correctness.
+The Figure~\ref{fig:comp_all_models} shows the membrane potential of all the models. 
+Lastly with the Figure~\ref{fig:abs_error_gpu_opt} 
+it is proven that the optimized GPU version is also aligned with the python (torch) reference.
+
+\graphicspath{{images}}
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.48\textwidth]{membrane_comparison_optimized_added.png}
+  \caption{Comparison of the Membrane Potential between all models.}
+  \label{fig:comp_all_models}
+\end{figure}
+
+
+\graphicspath{{images}}
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.48\textwidth]{GPU_optimized_Absolute_error.png}
+  \caption{Absolute error between Optimized GPU and Python.}
+  \label{fig:abs_error_gpu_opt}
+\end{figure}
 
 
 
