@@ -19,6 +19,11 @@ GPU_U = "../gpu_version/u_gpu.bin"
 GPU_G = "../gpu_version/g_gpu.bin"
 GPU_S = "../gpu_version/s_gpu.bin"
 
+GPU_U_OPT = "../optimized_gpu_version/u_gpu_opt.bin"
+GPU_G_OPT = "../optimized_gpu_version/g_gpu_opt.bin"
+GPU_S_OPT = "../optimized_gpu_version/s_gpu_opt.bin"
+
+
 # ----------------------------
 # Plot controls
 # ----------------------------
@@ -77,29 +82,44 @@ def main():
     g_gpu = load_bin(GPU_G, np.float32, (T, N))
     s_gpu = load_bin(GPU_S, np.uint8,   (T, N))
 
+    # Loading Optimized GPU Traces
+    u_gpu_opt = load_bin(GPU_U_OPT, np.float32, (T, N))
+    g_gpu_opt = load_bin(GPU_G_OPT, np.float32, (T, N))
+    s_gpu_opt = load_bin(GPU_S_OPT, np.uint8,   (T, N))
+
     
     print("Shapes:")
     print("  Python:", u_py.shape)
     print("  C     :", u_c.shape)
     print("  GPU   :", u_gpu.shape)
+    print("  GPU Opt:", u_gpu_opt.shape)
     print()
 
     print("Comparing membrane potential u")
-    du_py_c   = compare("Python vs C   (u)", u_py, u_c)
-    du_py_gpu = compare("Python vs GPU (u)", u_py, u_gpu)
-    du_c_gpu  = compare("C vs GPU       (u)", u_c, u_gpu)
+    du_py_c       = compare("Python vs C       (u)", u_py, u_c)
+    du_py_gpu     = compare("Python vs GPU     (u)", u_py, u_gpu)
+    du_py_gpuopt  = compare("Python vs GPU-Opt (u)", u_py, u_gpu_opt)
+    du_c_gpu      = compare("C vs GPU           (u)", u_c, u_gpu)
+    du_c_gpuopt   = compare("C vs GPU-Opt       (u)", u_c, u_gpu_opt)
+    du_gpu_gpuopt = compare("GPU vs GPU-Opt     (u)", u_gpu, u_gpu_opt)
     print()
 
     print("Comparing synaptic current g")
-    dg_py_c   = compare("Python vs C   (g)", g_py, g_c)
-    dg_py_gpu = compare("Python vs GPU (g)", g_py, g_gpu)
-    dg_c_gpu  = compare("C vs GPU       (g)", g_c, g_gpu)
+    dg_py_c       = compare("Python vs C       (g)", g_py, g_c)
+    dg_py_gpu     = compare("Python vs GPU     (g)", g_py, g_gpu)
+    dg_py_gpuopt  = compare("Python vs GPU-Opt (g)", g_py, g_gpu_opt)
+    dg_c_gpu      = compare("C vs GPU           (g)", g_c, g_gpu)
+    dg_c_gpuopt   = compare("C vs GPU-Opt       (g)", g_c, g_gpu_opt)
+    dg_gpu_gpuopt = compare("GPU vs GPU-Opt     (g)", g_gpu, g_gpu_opt)
     print()
 
     print("Comparing spikes s")
-    compare_spikes("Python vs C   (s)", s_py, s_c)
-    compare_spikes("Python vs GPU (s)", s_py, s_gpu)
-    compare_spikes("C vs GPU       (s)", s_c, s_gpu)
+    compare_spikes("Python vs C       (s)", s_py, s_c)
+    compare_spikes("Python vs GPU     (s)", s_py, s_gpu)
+    compare_spikes("Python vs GPU-Opt (s)", s_py, s_gpu_opt)
+    compare_spikes("C vs GPU           (s)", s_c, s_gpu)
+    compare_spikes("C vs GPU-Opt       (s)", s_c, s_gpu_opt)
+    compare_spikes("GPU vs GPU-Opt     (s)", s_gpu, s_gpu_opt)
     print()
 
     # ----------------------------
@@ -116,6 +136,7 @@ def main():
         ax.plot(t[:show_T], u_py[:show_T, i], label="Python", linewidth=1.8)
         ax.plot(t[:show_T], u_c[:show_T, i], "--", label="C", linewidth=1.2)
         ax.plot(t[:show_T], u_gpu[:show_T, i], ":", label="GPU", linewidth=1.5)
+        ax.plot(t[:show_T], u_gpu_opt[:show_T, i], "-.", label="GPU-Opt", linewidth=1.5)
         ax.set_ylabel(f"Neuron {i}")
         ax.grid(True, alpha=0.3)
         ax.legend(loc="upper right")
@@ -147,6 +168,16 @@ def main():
     plt.legend(ncol=4, fontsize=8)
     plt.tight_layout()
 
+    plt.figure(figsize=(16, 4))
+    for i in range(min(N, 8)):
+        plt.plot(t[:show_T], np.abs(du_py_gpuopt[:show_T, i]), label=f"n{i} Python-GPUOpt")
+    plt.xlabel("Time step")
+    plt.ylabel("|u_py - u_gpu_opt|")
+    plt.title(f"Absolute error: Python vs GPU-Opt (first {show_T} timesteps)")
+    plt.grid(True, alpha=0.3)
+    plt.legend(ncol=4, fontsize=8)
+    plt.tight_layout()
+
     # ----------------------------
     # Spike raster comparison for first show_N neurons and first show_T timesteps
     # ----------------------------
@@ -163,6 +194,10 @@ def main():
     # GPU
     gpu_times, gpu_neurons = np.where(s_gpu[:show_T, :show_N] > 0)
     plt.scatter(gpu_times, gpu_neurons, s=20, marker=".", label="GPU spikes")
+
+    # GPU Optimized
+    gpuopt_times, gpuopt_neurons = np.where(s_gpu_opt[:show_T, :show_N] > 0)
+    plt.scatter(gpuopt_times, gpuopt_neurons, s=40, marker="+", label="GPU-Opt spikes")
 
     plt.xlim(0, show_T)
     plt.ylim(-1, show_N)
