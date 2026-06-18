@@ -5,7 +5,7 @@
 #include <cuda_runtime.h>
 #include "gpu_optimized.h"
 
-#define TEST 1
+#define TEST 0
 
 #define CUDA_CHECK(call) do {                                          \
     cudaError_t err = call;                                            \
@@ -16,8 +16,8 @@
     }                                                                  \
 } while(0)
 
-// Number of neurons processed per shared-memory tile.
-// Must divide evenly into blockDim.x (both are 256 here).
+// Must divide evenly into blockDim.x (both are 256 here). 
+// If 512, the threads need to do 2 loads, if 128 half of the threads would be idle.
 #define TILE_W 256
 
 
@@ -37,34 +37,55 @@ __global__ void fused_snn_kernel(
 )
 {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
+
+    // Allocating the shared memory.
     __shared__ uint8_t s_tile[TILE_W];
 
+    // Calculating the external contribution with the external spikes and the weights.
     float ext_contrib = (i < n) ? (float)ext_step[i] * ext_w : 0.0f;
+
+    // With acc, the g[i] is now not written to the global memory, this will be used later for calculating decayed g[i].
     float acc = ext_contrib;
+
+    // Calculating the base of the current neuron, for the recurrent calculation.
     const float* W_row = (i < n) ? W + (size_t)i * n : NULL;
 
+    // Shared memory tiling for the s_prev[]
     for (int tile_start = 0; tile_start < n; tile_start += TILE_W) {
+        // Cooperative load, each thread loads one element to the s_tile from the s_prev array.
         int j_load = tile_start + threadIdx.x;
         s_tile[threadIdx.x] = (j_load < n) ? s_prev[j_load] : 0;
         __syncthreads();
 
         if (i < n) {
             int tile_end = min(TILE_W, n - tile_start);
-            for (int k = 0; k < tile_end; ++k)
-                acc += W_row[tile_start + k] * (float)s_tile[k];
+            // Accumulation into the acc of the weights if there was a spike previously.
+            // --- float4 vectorized inner loop ---
+            int k = 0;
+            int tile_end4 = (tile_end / 4) * 4;
+            for (; k < tile_end4; k += 4) {
+                float4 w4 = *reinterpret_cast<const float4*>(W_row + tile_start + k);
+                acc += w4.x * (float)s_tile[k    ];
+                acc += w4.y * (float)s_tile[k + 1];
+                acc += w4.z * (float)s_tile[k + 2];
+                acc += w4.w * (float)s_tile[k + 3];
+            }
         }
         __syncthreads();
     }
 
     if (i >= n) return;
 
+    // Synaptic decay
     float gi = alpha * g[i] + acc;
     g[i] = gi; 
 
-    /* Membrane update. */
+    // Membrane update with soft reset if there is a spike
     float ui = u[i] - (float)s_prev[i] * thresh;
+    // Membrane decay
     ui = beta * ui + (1.0f - beta) * gi;
 
+    // Spike decision
     uint8_t si = (ui > thresh) ? 1 : 0;
     u[i] = ui;
     s[i] = si;
@@ -144,6 +165,7 @@ int main(void) {
      * element of s_prev into the shared-memory tile.
      */
     int threads = TILE_W;   /* == 256 */
+    // Dividing the neuron size into block of threads of 256.
     int blocks  = (N + threads - 1) / threads;
 
     uint8_t* d_s_prev = d_s_a;
