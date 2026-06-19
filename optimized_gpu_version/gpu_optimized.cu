@@ -120,8 +120,8 @@ int main(void) {
     const float beta  = expf(-dt / tau_m);
     const float alpha = expf(-dt / tau_s);
 
-    size_t W_sz  = (size_t)N * N;
-    size_t TN_sz = (size_t)T * N;
+    size_t W_sz  = (size_t)GRID_N * GRID_N;
+    size_t TN_sz = (size_t)STEPS_T * GRID_N;
 
     /* Host buffers */
     float*   h_W   = (float*)  malloc(W_sz  * sizeof(float));
@@ -141,18 +141,18 @@ int main(void) {
     uint8_t* d_s_trace = NULL;
 
     CUDA_CHECK(cudaMalloc((void**)&d_W,   W_sz  * sizeof(float)));
-    CUDA_CHECK(cudaMalloc((void**)&d_u,   N     * sizeof(float)));
-    CUDA_CHECK(cudaMalloc((void**)&d_g,   N     * sizeof(float)));  
-    CUDA_CHECK(cudaMalloc((void**)&d_s_a, N     * sizeof(uint8_t)));
-    CUDA_CHECK(cudaMalloc((void**)&d_s_b, N     * sizeof(uint8_t)));
+    CUDA_CHECK(cudaMalloc((void**)&d_u,   GRID_N     * sizeof(float)));
+    CUDA_CHECK(cudaMalloc((void**)&d_g,   GRID_N     * sizeof(float)));  
+    CUDA_CHECK(cudaMalloc((void**)&d_s_a, GRID_N     * sizeof(uint8_t)));
+    CUDA_CHECK(cudaMalloc((void**)&d_s_b, GRID_N     * sizeof(uint8_t)));
     CUDA_CHECK(cudaMalloc((void**)&d_ext, TN_sz * sizeof(uint8_t)));
 
     CUDA_CHECK(cudaMemcpy(d_W,   h_W,   W_sz  * sizeof(float),   cudaMemcpyHostToDevice));
     CUDA_CHECK(cudaMemcpy(d_ext, h_ext, TN_sz * sizeof(uint8_t), cudaMemcpyHostToDevice));
-    CUDA_CHECK(cudaMemset(d_u,   0, N * sizeof(float)));
-    CUDA_CHECK(cudaMemset(d_g,   0, N * sizeof(float)));
-    CUDA_CHECK(cudaMemset(d_s_a, 0, N * sizeof(uint8_t)));
-    CUDA_CHECK(cudaMemset(d_s_b, 0, N * sizeof(uint8_t)));
+    CUDA_CHECK(cudaMemset(d_u,   0, GRID_N * sizeof(float)));
+    CUDA_CHECK(cudaMemset(d_g,   0, GRID_N * sizeof(float)));
+    CUDA_CHECK(cudaMemset(d_s_a, 0, GRID_N * sizeof(uint8_t)));
+    CUDA_CHECK(cudaMemset(d_s_b, 0, GRID_N * sizeof(uint8_t)));
 
 #if TEST == 1
     CUDA_CHECK(cudaMalloc((void**)&d_u_trace, TN_sz * sizeof(float)));
@@ -166,7 +166,7 @@ int main(void) {
      */
     int threads = TILE_W;   /* == 256 */
     // Dividing the neuron size into block of threads of 256.
-    int blocks  = (N + threads - 1) / threads;
+    int blocks  = (GRID_N + threads - 1) / threads;
 
     uint8_t* d_s_prev = d_s_a;
     uint8_t* d_s      = d_s_b;
@@ -176,15 +176,15 @@ int main(void) {
     CUDA_CHECK(cudaEventCreate(&ev_stop));
     CUDA_CHECK(cudaEventRecord(ev_start, 0));
 
-    for (int t = 0; t < T; ++t) {
-        uint8_t* d_ext_step = d_ext + (size_t)t * N;
+    for (int t = 0; t < STEPS_T; ++t) {
+        uint8_t* d_ext_step = d_ext + (size_t)t * GRID_N;
 
 
         fused_snn_kernel<<<blocks, threads>>>(
             d_W, d_s_prev, d_ext_step,
             d_u, d_g, d_s,
             d_u_trace, d_g_trace, d_s_trace,
-            alpha, ext_weight, beta, theta, N, t
+            alpha, ext_weight, beta, theta, GRID_N, t
         );
 
         /* Swap ping-pong pointers */

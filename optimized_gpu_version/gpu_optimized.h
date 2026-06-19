@@ -10,8 +10,16 @@
 // #define N 1024
 // #define T 3000
 
-#define N 8
-#define T 20
+// #define N 8
+// #define T 20
+
+#ifndef GRID_N
+#define GRID_N 1024
+#endif
+
+#ifndef STEPS_T
+#define STEPS_T 3000
+#endif
 
 #define dt          1e-3f
 #define tau_m       20e-3f

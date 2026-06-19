@@ -2,7 +2,7 @@
 #SBATCH --job-name=GPU_basic_snn
 #SBATCH --mail-type=ALL
 #SBATCH --mail-user=s339049@studenti.polito.it
-#SBATCH --partition=gpu_v100
+#SBATCH --partition=gpu_a40
 #SBATCH --time=00:00:10
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1

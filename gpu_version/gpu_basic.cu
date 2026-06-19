@@ -18,8 +18,8 @@
 
 /*
  * Synaptic update:
- *   g[i] = alpha * g[i] + ext_spikes[t*N + i] * ext_weight
- *                        + sum_j( W[i*N + j] * s_prev[j] )
+ *   g[i] = alpha * g[i] + ext_spikes[t*GRID_N + i] * ext_weight
+ *                        + sum_j( W[i*GRID_N + j] * s_prev[j] )
  *
  */
 __global__ void synapse_kernel(
@@ -108,8 +108,8 @@ int main(void) {
     const float beta  = expf(-dt / tau_m);
     const float alpha = expf(-dt / tau_s);
 
-    size_t W_sz  = (size_t)N * N;
-    size_t TN_sz = (size_t)T * N;
+    size_t W_sz  = (size_t)GRID_N * GRID_N;
+    size_t TN_sz = (size_t)STEPS_T * GRID_N;
 
     /* Host buffers */
     float*   h_W   = (float*)  malloc(W_sz  * sizeof(float));
@@ -122,7 +122,7 @@ int main(void) {
     float*   d_W;
     float*   d_u, *d_g;
     uint8_t* d_s_a, *d_s_b;   /* ping-pong buffers for s / s_prev */
-    uint8_t* d_ext;            /* all T*N ext spikes, uploaded once */
+    uint8_t* d_ext;            /* all STEPS_T*GRID_N ext spikes, uploaded once */
             
     /* Trace buffers initialized to NULL so they always exist for the compiler */
     float* d_u_trace = NULL;
@@ -130,18 +130,18 @@ int main(void) {
     uint8_t* d_s_trace = NULL;
 
     CUDA_CHECK(cudaMalloc((void**)&d_W,   W_sz  * sizeof(float)));
-    CUDA_CHECK(cudaMalloc((void**)&d_u,   N     * sizeof(float)));
-    CUDA_CHECK(cudaMalloc((void**)&d_g,   N     * sizeof(float)));
-    CUDA_CHECK(cudaMalloc((void**)&d_s_a, N     * sizeof(uint8_t)));
-    CUDA_CHECK(cudaMalloc((void**)&d_s_b, N     * sizeof(uint8_t)));
+    CUDA_CHECK(cudaMalloc((void**)&d_u,   GRID_N     * sizeof(float)));
+    CUDA_CHECK(cudaMalloc((void**)&d_g,   GRID_N     * sizeof(float)));
+    CUDA_CHECK(cudaMalloc((void**)&d_s_a, GRID_N     * sizeof(uint8_t)));
+    CUDA_CHECK(cudaMalloc((void**)&d_s_b, GRID_N     * sizeof(uint8_t)));
     CUDA_CHECK(cudaMalloc((void**)&d_ext, TN_sz * sizeof(uint8_t)));
 
     CUDA_CHECK(cudaMemcpy(d_W,   h_W,   W_sz  * sizeof(float),   cudaMemcpyHostToDevice));
     CUDA_CHECK(cudaMemcpy(d_ext, h_ext, TN_sz * sizeof(uint8_t), cudaMemcpyHostToDevice));
-    CUDA_CHECK(cudaMemset(d_u,   0, N * sizeof(float)));
-    CUDA_CHECK(cudaMemset(d_g,   0, N * sizeof(float)));
-    CUDA_CHECK(cudaMemset(d_s_a, 0, N * sizeof(uint8_t)));
-    CUDA_CHECK(cudaMemset(d_s_b, 0, N * sizeof(uint8_t)));
+    CUDA_CHECK(cudaMemset(d_u,   0, GRID_N * sizeof(float)));
+    CUDA_CHECK(cudaMemset(d_g,   0, GRID_N * sizeof(float)));
+    CUDA_CHECK(cudaMemset(d_s_a, 0, GRID_N * sizeof(uint8_t)));
+    CUDA_CHECK(cudaMemset(d_s_b, 0, GRID_N * sizeof(uint8_t)));
 
     #if TEST == 1
     CUDA_CHECK(cudaMalloc((void**)&d_u_trace, TN_sz * sizeof(float)));
@@ -150,7 +150,7 @@ int main(void) {
     #endif
 
     int threads = 256;
-    int blocks  = (N + threads - 1) / threads;
+    int blocks  = (GRID_N + threads - 1) / threads;
 
     /* s_prev = d_s_a (zeros), s = d_s_b; swap each step */
     uint8_t* d_s_prev = d_s_a;
@@ -161,14 +161,14 @@ int main(void) {
     CUDA_CHECK(cudaEventCreate(&ev_stop));
     CUDA_CHECK(cudaEventRecord(ev_start, 0));
 
-    for (int t = 0; t < T; ++t) {
-        uint8_t* d_ext_step = d_ext + (size_t)t * N;
+    for (int t = 0; t < STEPS_T; ++t) {
+        uint8_t* d_ext_step = d_ext + (size_t)t * GRID_N;
 
         synapse_kernel<<<blocks, threads>>>(d_W, d_s_prev, d_ext_step,
-                                            d_g, alpha, ext_weight, N);
+                                            d_g, alpha, ext_weight, GRID_N);
         neuron_kernel <<<blocks, threads>>>(d_u, d_g, d_s_prev, d_s,
                                             d_u_trace, d_g_trace, d_s_trace,
-                                            beta, theta, N, t);
+                                            beta, theta, GRID_N, t);
 
         /* swap ping-pong pointers */
         uint8_t* tmp = d_s_prev;
