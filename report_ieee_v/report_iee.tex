@@ -37,7 +37,7 @@
   tabsize=3
 }
 
-\title{GPU-Accelerated LIF Spiking Neuron Networks Simulator}
+\title{GPU-Accelerated LIF Spiking Neural Networks Simulator}
 
 \author{\IEEEauthorblockN{Emre Sagir}
 \IEEEauthorblockA{\textit{Computer Engineering (GPU Programming Class)} \\
@@ -58,9 +58,9 @@ s339049@studenti.polito.it}
 spiking neural networks, leaky integrate-and-fire, GPU programming, CUDA, synaptic decay, simulator
 \end{IEEEkeywords}
 
-\section{Introduction}
+\section{Background}
 
-
+\subsection{Neuron Model}
 The discrete-time implementation of the Leaky Integrate-and-Fire (LIF) model 
 as discussed by Stan and Rhodes \cite{stan2024learning} allows for 
 efficient sequence modeling in SNNs.
@@ -116,7 +116,7 @@ where the decay factor $\beta$ is defined by the membrane time constant $\tau$ a
 \beta = \exp\left(-\frac{\Delta t}{\tau}\right)
 \end{equation}
 
-\section{Synapse Model}
+\subsection{Synapse Model}
 
 
 Firstly, the SNN simulator could have been without the synapse model. The synapses could have been just the weights without the leakage. 
@@ -176,13 +176,26 @@ The sparsity can be added later, but will introduce a high level of complexity.
 % this will provide if the spike occured or not.
 % And this will be used for later step.
 
+\section{Proposed Method}
+From the previous section, we know the spiking neural network calculation depends on repeatedly performing the given calculations over a specified number of timesteps. 
+Even though different timesteps have data dependencies, different neurons can be calculated on different threads, which gives us the opportunity to exploit the GPU's parallel computing power.
+
+My approach basically involves having different models do the same work, and comparing their performance with different parameters (neuron count, timestep).
+
+Firstly, creating a base with the CPU Model, then having a reference for its correctness by using the Python torch library.
+Secondly, creating a basic GPU model, which will give us a baseline for the GPU. 
+Lastly, optimizing the GPU Model. This process will provide four different models that can be compared. 
+
+Every model will be compared with a small test set to be sure that all the calculations are correct.
+
+At the end, the performance comparison will be done between the models to understand the speed-up. And will propose further optimization possibilities.
 
 
 \section{CPU Model}
 
 \subsection{Implementation}
 
-The CPU implementation is being done with the given neuron and synapse model definitions
+The CPU implementation is done with the given neuron and synapse model definitions
 in the previous chapters. It is written in C. The main time loop is given in Figure 1.~\ref{fig:C_impl}. 
   
   For the synaptic update, the external input current is calculated with the given external spikes and weights, then, with a second for loop, 
@@ -229,10 +242,69 @@ Pytorch version is also implemented with the same model definitions.
 The comparison test is done.
 
   Firstly, the Poisson (input) spikes are saved while running the PyTorch version. 
-  Then those spikes are imported to the C version. 
+  Then those spikes are imported to the C version as can be seen in the Figure~\ref{fig:file_load_func}.
   This way, the model is expected to be run exactly the same. 
-  Meanwhile, membrane potentials (u[t]) and spikes (s[t]) are being saved in both versions. 
+  Meanwhile, as Figure~\ref{fig:saving_traces_files} shows, membrane potentials (u[t]) and spikes (s[t]) are being saved in every timestep in both versions. 
   At the end, those saved values are compared with a script to check the correctness of the C implementation.
+  \begin{figure}[h]
+\centering
+\begin{lstlisting}
+void loadw_f32(const char *fn, size_t count, float arr[]) {
+    FILE *f = fopen(fn,"rb");
+    if (!f) {
+        printf("File couldn't opened \n");
+    }
+    float *buf = malloc(sizeof(float) * count);
+    size_t r = fread(buf, sizeof(float), count, f);
+    if(r != count) fprintf(stderr,"read %zu of %zu elements\n", r, count);
+    fclose(f);
+    memcpy(arr, buf, sizeof(float) * N * N);
+    printf("Weights are loaded \n");
+}
+
+void load_ext_spikes(const char *fn, uint8_t arr[]){
+    uint8_t *buf = malloc(T * N);
+    FILE *f = fopen(fn,"rb");
+    if (!f) {
+        printf("File couldn't opened \n");
+    }
+    fread(buf, 1, T * N, f);
+    fclose(f);
+    memcpy(arr, buf, sizeof(uint8_t) * T * N);
+    printf("Ext spikes are loaded \n");
+}
+\end{lstlisting}
+\caption{File load functions}
+\label{fig:file_load_func}
+\end{figure}
+
+  \begin{figure}[h]
+\centering
+\begin{lstlisting}
+      #if TEST == 1
+      for (int i = 0; i < N; ++i) {
+          u_trace[t * N + i] = u[i];
+          g_trace[t * N + i] = g[i];
+          s_trace[t * N + i] = s[i];
+      }
+      #endif
+
+    // Outside of the timestep loop
+    #if TEST == 1
+    FILE *f_u = fopen("u_c.bin", "wb");
+    FILE *f_g = fopen("g_c.bin", "wb");
+    FILE *f_s = fopen("s_c.bin", "wb");
+    fwrite(u_trace, sizeof(float), T * N, f_u);
+    fwrite(g_trace, sizeof(float), T * N, f_g);
+    fwrite(s_trace, sizeof(uint8_t), T * N, f_s);
+    fclose(f_u);
+    fclose(f_g);
+    fclose(f_s);
+    #endif
+\end{lstlisting}
+\caption{Saving the traces and to the files}
+\label{fig:saving_traces_files}
+\end{figure}
 
   Comparison output is given in the figure~\ref{fig:comp_w_pytorch}. 
   As we can see from the given figure, the difference is pretty close to zero,
@@ -251,11 +323,11 @@ The comparison test is done.
 \subsection{Implementation} \label{basic_problems_mentioned}
 The Basic GPU Model implementation is done after the CPU model, to have a middle ground before optimizing this version.
 
-There are two separate kernels because there is a data dependency between the synapse and neuron update. 
-The kernels need to be separate because the input current accumulation is done in the synapse update, and it is being used right after for the neuron update. 
+For this basic version, the kernels are separated. One is for the synapse calculation, the other is for the neuron.
 
-The synapse kernel is given at the Figure\ref{fig:Synapse_Basic_GPU_impl}.
-With the GPU version it is clearly visible that now there is only one for loop, compared to two for loops of the CPU model.
+The synapse kernel is given at the Figure~\ref{fig:Synapse_Basic_GPU_impl}.
+With the GPU version it is clearly visible that now there is only one for loop, compared to two for loops of the CPU model. 
+Still the biggest bottleneck is this the recurrent calculation loop.
 
   \begin{figure}[h]
 \centering
@@ -332,7 +404,7 @@ In Figure~\ref{fig:membrane_comp_Torch_CPU_GPU}, spikes are happening in the cor
 The next step is to show the absolute error of the GPU, how much it diverges from the reference. 
 In Figure~\ref{fig:absolute_error_torch_GPU} absolute error of the first eight neurons being shown. 
 The errors are zero for most of the neurons and almost zero for others; 
-this small difference could be the result of the float representation difference between the different systems.
+this small difference could be the result of the float representation difference between different systems.
 
 \graphicspath{{images}}
 \begin{figure}[H]
@@ -358,9 +430,9 @@ Lastly the biggest bottleneck, the un-coalesced access of the weight matrix.
 The optimal way would be preprocessing the weight matrix with a transpose, and having the access with W[j*n + i]. 
 But in this project the focus is using GPU optimization techniques, thus float4 vectorized load is introduced.
 
-In the Figure~\ref{fig:Fused_Optimized_GPU_impl}, the fused kernel is shown with the mentioned optimizations: fused kernel and memory tiling.
+In the Figure~\ref{fig:Fused_Optimized_GPU_impl}, the fused kernel is shown with the mentioned optimizations: fused kernel, memory tiling and vectorized load.
 The kernel first computes the external contribution of the external spikes and the weights. 
-Then, with the memory tiling, the recurrent connections are accumulated into the acc variable.
+Then, with the memory tiling and the vectorized load the recurrent connections are accumulated into the acc variable.
 The tile size was decided as 256, and the block size was also decided as 256; this way, all the threads are loading the data from the global memory to the shared memory tile.
 In the figure~\ref{fig:thread and block calc}, this thread and block count calculation is shown. 
 Lastly, the decay and the membrane potential update are done.
@@ -387,8 +459,15 @@ __global__ void fused_snn_kernel(...)
 
         if (i < n) {
             int tile_end = min(TILE_W, n - tile_start);
-            for (int k = 0; k < tile_end; ++k)
-                acc += W_row[tile_start + k] * (float)s_tile[k];
+            int k = 0;
+            int tile_end4 = (tile_end / 4) * 4;
+            for (; k < tile_end4; k += 4) {
+                float4 w4 = *reinterpret_cast<const float4*>(W_row + tile_start + k);
+                acc += w4.x * (float)s_tile[k    ];
+                acc += w4.y * (float)s_tile[k + 1];
+                acc += w4.z * (float)s_tile[k + 2];
+                acc += w4.w * (float)s_tile[k + 3];
+            }
         }
         __syncthreads();
     }
@@ -429,6 +508,12 @@ The Figure~\ref{fig:comp_all_models} shows the membrane potential of all the mod
 Lastly with the Figure~\ref{fig:abs_error_gpu_opt} 
 it is proven that the optimized GPU version is also aligned with the python (torch) reference.
 
+Lastly, to ensure that the optimization methods are successful, 
+In the Figure~\ref{fig:first_basic_optimized_comparison}, the calculation time of the basic and the optimized versions are shown.
+ The basic version finished the calculations in 716ms, the optimized version in 216ms. Thus, the speed up is around 3.3 times.
+
+
+
 \graphicspath{{images}}
 \begin{figure}[H]
   \centering
@@ -444,6 +529,72 @@ it is proven that the optimized GPU version is also aligned with the python (tor
   \includegraphics[width=0.48\textwidth]{GPU_optimized_Absolute_error.png}
   \caption{Absolute error between Optimized GPU and Python.}
   \label{fig:abs_error_gpu_opt}
+\end{figure}
+
+
+\graphicspath{{images}}
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.48\textwidth]{first_basic_optimized_comparison.png}
+  \caption{First comparison of the basic and optimized versions}
+  \label{fig:first_basic_optimized_comparison}
+\end{figure}
+
+
+\section{Performance Testing}
+First of all, the sbatch script was edited to be an automated one to see the performance with different N (neuron) and T(timestep) values.
+And the N and the T variable names are changed into GRID\_N and STEPS\_T. 
+This is done in order to fix the problem with the usage of the nvcc -D flag.
+The sbatch is compiling the source file as given in the Figure~\ref{fig:NVCC_compile}.
+With the automated script, different N values are given to the compiler to overwrite the defined values.
+At the end, all the speed results are saved into a file. 
+
+  \begin{figure}[h]
+\centering
+\begin{lstlisting}
+          nvcc -O3 -DGRID_N=$n -DSTEPS_T=$t gpu_optimized.cu -o snn_benchmark.out
+\end{lstlisting}
+\caption{NVCC compile command}
+\label{fig:NVCC_compile}
+\end{figure}
+
+With a Python script, the speed result file is read, and the speed values with different T and N values are plotted as can be seen in the Figure~\ref{fig:execution_w_diff_T_and_N}.
+Except for the two divergent points in the graph, the results are expected. The speed-up is eminent in the beginning and slowly decreases while the scaling increases. 
+And the points nearly merge at the highest Neuron Value. 
+
+The merge at the end is the result of the memory bandwidth limit. 
+As I mentioned before, the biggest bottleneck is the uncoalesced access to the weight matrix.
+This is being optimized with the float4 vectorized load. 
+But this only made the transitions more efficient, loading 16 bytes in just one transaction. 
+Basically, using the memory bandwidth more efficiently, 
+But when the neuron count increased, the block count also increased. When N is 256, there is only 1 block; when N is 16384, there are 64 blocks which does parallel transaction requests to/from memory.
+Which saturates the memory bandwidth without the need for vectorized efficient loads. 
+
+\graphicspath{{images}}
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.48\textwidth]{snn_performance_comparison_T_and_N.png}
+  \caption{Execution time with different T and N values}
+  \label{fig:execution_w_diff_T_and_N}
+\end{figure}
+
+More detailed view of the different neuron counts with a constant timestep is given in the Figure~\ref{fig:execution_w_constant_T}.
+Moreover, the speed factor is given in the ~\ref{fig:speed_factor}, which shows that with the scaling, the model becomes bandwidht bound.
+
+
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.48\textwidth]{snn_execution_times_log.png}
+  \caption{Execution time with a constant T.}
+  \label{fig:execution_w_constant_T}
+  \vspace{0.5cm} 
+  
+\end{figure}
+\begin{figure}[H]
+  \includegraphics[width=0.48\textwidth]{snn_speedup_factor.png}
+  \caption{Speed factor with a constant T.}
+  \label{fig:speed_factor}
 \end{figure}
 
 
