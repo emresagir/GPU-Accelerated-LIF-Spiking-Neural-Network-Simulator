@@ -2,11 +2,11 @@
 #SBATCH --job-name=GPU_basic_snn
 #SBATCH --mail-type=ALL
 #SBATCH --mail-user=s339049@studenti.polito.it
-#SBATCH --partition=gpu_a40
+#SBATCH --partition=gpu_a100
 #SBATCH --time=00:00:10
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
-#SBATCH --output=GPU_basic.log
+#SBATCH --output=GPU_optimized.log
 #SBATCH --mem-per-cpu=1M
 #SBATCH --gres=gpu:1
 
