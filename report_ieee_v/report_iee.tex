@@ -541,7 +541,7 @@ In the Figure~\ref{fig:first_basic_optimized_comparison}, the calculation time o
 \end{figure}
 
 
-\section{Performance Testing}
+\section{Results and Performance Evaluation}
 First of all, the sbatch script was edited to be an automated one to see the performance with different N (neuron) and T(timestep) values.
 And the N and the T variable names are changed into GRID\_N and STEPS\_T. 
 This is done in order to fix the problem with the usage of the nvcc -D flag.
@@ -597,7 +597,81 @@ Moreover, the speed factor is given in the ~\ref{fig:speed_factor}, which shows 
   \label{fig:speed_factor}
 \end{figure}
 
+After the tests comparing the basic and optimized versions of the GPU, comparisons for all the models are planned.
+First of all, the CPU version is run in the Linux(Ubuntu) environment. 
+This was a necessity to measure the time because in Windows, it is not possible to measure a C code's elapsed time this exact.
+With the usage of the Linux system calls given in the Figure~\ref{fig:clock_syscall}. 
+The C code execution time was measured with different N and T values as well.
 
+  \begin{figure}[h]
+\centering
+\begin{lstlisting}
+  clock_gettime(CLOCK_MONOTONIC_RAW, &start);
+  clock_gettime(CLOCK_MONOTONIC_RAW, &finish);
+\end{lstlisting}
+\caption{Clock system calls}
+\label{fig:clock_syscall}
+\end{figure}
+
+Then the last model, which is the reference Torch implementation, was measured. This time, the performance counter library is used, the command given in the Figure~\ref{fig:perf_counter}.
+
+  \begin{figure}[h]
+\centering
+\begin{lstlisting}
+  time.perf_counter()
+\end{lstlisting}
+\caption{Performance counter command}
+\label{fig:perf_counter}
+\end{figure}
+
+
+At the end, these two benchmark data are also added to the graphs; it is better to note that the CPU that the code runs with has a different, probably a lower clock frequency and performance.
+Nevertheless, the graphs provide a good visualization of the speed-up and the performance bottlenecks.\\
+
+The Figure~\ref{fig:execution_t_all} shows all models' execution time results with different N values. 
+To achieve a more clear visualization the T (timestep) has decided as 1000. 
+As we can see from the graph, it is apparent that the the speed-up achieved with the GPU models. 
+Especially when the tests are scaled up the GPU achieved better speed-up. 
+
+When analyzing the two newly tested models, we can see that Torch is much faster than the CPU implementation. 
+CPU is a linear curve as expected, but the Torch is not, even though it is a CPU implementation.
+This is because the Torch is using optimized CPU instructions and can achieve some level of parallelism. 
+This situation is visible in the first three steps of N in the graph (256, 512, 1024), the CPU's execution time scaled up as expected.
+While the Torch model is able to stay nearly the same execution duration even though the scaling up. 
+But after the N = 1024 point, the torch's duration also followed the scale-up.
+
+
+\graphicspath{{images}}
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.48\textwidth]{snn_all_exec_times.png}
+  \caption{Execution time of all the models with different N values.}
+  \label{fig:execution_t_all}
+\end{figure}
+
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.48\textwidth]{snn_speedup_vs_cpu.png}
+  \vspace{0.5cm} 
+  
+  \includegraphics[width=0.48\textwidth]{snn_speedup_heatmap.png}
+  \caption{All models speed up with CPU Baseline, graph and heatmap}
+  \label{fig:cpu_baseline_graph_heatmap}
+\end{figure}
+
+In Figure~\ref{fig:cpu_baseline_graph_heatmap}, the CPU chosen as a baseline and speed-up is shown. At the above graphical and at the below heatmap visualization are given.
+In the heatmap visualization, the different T(timestep) values are also shown. 
+When the number of neurons is small, like 256, the CPU generally achieves a better result. 
+One of the reasons for this is that the kernel overhead for GPU parallelism is not being exploited efficiently.
+
+Also the GPU achieved the highest speed up with T = 1000 and N = 16384.
+At this point the Optimized GPU version is 112.7 times faster compared to the CPU. Which is not that higher than the Basic version being 111.5 times. 
+This is because the optimizations performed better in the beginning and the middle region of the configurations.
+This optimizations lost its effect at the late region because the model hit the roof of the memory bandwidth.
+
+
+\section{Discussion}
 
 \bibliographystyle{plain} % Styles: plain, unsrt, alpha, etc.
 \bibliography{references}
