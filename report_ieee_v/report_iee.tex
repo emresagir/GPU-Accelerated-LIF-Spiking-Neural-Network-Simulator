@@ -51,7 +51,12 @@ s339049@studenti.polito.it}
 \maketitle
 
 \begin{abstract}
-    LOREM IPSUM AAAAAAAAa
+    This paper presents a GPU-Accelerated simulator that is based on a discrete-time LIF (Leaky Integrate and Fire) neuron model and a synaptic model.
+    Simulator is written in C and CUDA, and validated against the Torch reference to ensure correctness.
+    Four models are created in total. C and Torch versions, which run on the CPU; Basic and Optimized versions for the GPU. 
+    The optimized version consists of three different optimization techniques: Kernel fusion, shared memory tiling, and vectorized load.
+    From the results, the optimized GPU version achieved 3.3x speed-up compared to the basic GPU version, 112x compared to the CPU version.
+    When the neuron count got larger, the optimized and basic GPU versions converged on the speed-up graph; this is because the models hit the memory-bandwidth limit.
 \end{abstract}
 
 \begin{IEEEkeywords}
@@ -138,7 +143,7 @@ Parameters are given for synapse model: \\[0.5em]
 
 
 \begin{equation}
-g_i[t] = \alpha\, g_i[t-1] + \sum_j w_{ji}\, s_j[n]
+g_i[t] = \alpha\, g_i[t-1] + \sum_j w_{ji}\, s_j[t]
 \label{eq:discrete_synapse}
 \end{equation}
 
@@ -188,7 +193,7 @@ Lastly, optimizing the GPU Model. This process will provide four different model
 
 Every model will be compared with a small test set to be sure that all the calculations are correct.
 
-At the end, the performance comparison will be done between the models to understand the speed-up. And will propose further optimization possibilities.
+At the end, the performance comparison will be done between the models to understand the speed-up. And will compare the work with other related works.
 
 
 \section{CPU Model}
@@ -196,7 +201,7 @@ At the end, the performance comparison will be done between the models to unders
 \subsection{Implementation}
 
 The CPU implementation is done with the given neuron and synapse model definitions
-in the previous chapters. It is written in C. The main time loop is given in Figure 1.~\ref{fig:C_impl}. 
+in the previous chapters. It is written in C. The main time loop is given in Figure~\ref{fig:C_impl}. 
   
   For the synaptic update, the external input current is calculated with the given external spikes and weights, then, with a second for loop, 
   the recurrent connections are accumulated into the input current; lastly, the synaptic decay is being applied.
@@ -579,7 +584,7 @@ Which saturates the memory bandwidth without the need for vectorized efficient l
 \end{figure}
 
 More detailed view of the different neuron counts with a constant timestep is given in the Figure~\ref{fig:execution_w_constant_T}.
-Moreover, the speed factor is given in the ~\ref{fig:speed_factor}, which shows that with the scaling, the model becomes bandwidht bound.
+Moreover, the speed factor is given in the Figure~\ref{fig:speed_factor}, which shows that with the scaling, the model becomes bandwidht bound.
 
 
 
@@ -672,7 +677,68 @@ This optimizations lost its effect at the late region because the model hit the 
 
 
 \section{Discussion}
+The results show a big speed-up with the optimized GPU Model over the CPU model.
+The speed-up can reach 112.7× when the parameters saturate the GPU.
+But this big speed-up is not visible across the entire parameter space. 
+Especially when the neuron count is minimal (N=256), the GPU setup and kernel launch overheads, 
+makes the GPU slower than the CPU counterpart.
 
-\bibliographystyle{plain} % Styles: plain, unsrt, alpha, etc.
+\subsection{Analysis of Optimization Techniques}
+
+Three optimization techniques is introduced for a higher efficieny and achieve more optimized code. 
+
+\begin{itemize}
+    \item \textbf{Kernel Fusion:} To prevent the kernel launch overhead, kernel fusion is being used. The two kernels of the Neuron and Synapse calculations merged into one. This also resulted in a lower global memory R/W as the $g_i[t]$ started to live in the registers. 
+    \item \textbf{Shared Memory Tiling:} The basic GPU version was reading the whole $s_{prev}$ array for every neuron. By loading this array in the shared memory tile, the data can be read by all threads in the same block.
+    \item \textbf{Vectorized Loads:} The vectorized load of float4 helped the optimized version to use the memory bandwidth more efficiently resulting a faster execution in the beginning and the mid range of parameters.
+\end{itemize}
+
+\subsection{Memory Bandwidth Bottleneck and Saturation Point}
+
+The Optimized and the Basic versions converge at the high number of neurons (N = 16386), it is visible from the Figure~\ref{fig:execution_t_all}.
+This is expected as when N = 16386, the recurrent array of the weights is 1.07 GB. 
+
+$$\text{Memory} = 16384^2 \times 4 \text{ bytes} \approx 1.07 \text{ GB}$$
+
+At this point, the simulation is no longer compute-bound; it is bandwidth-bound. From the Figure~\ref{fig:speed_factor}, it is understandable that optimization techniques lost their edge when the execution becomes memory-bandwidth bound.
+
+\subsection{Matrix Transposition and Sparsity}
+
+The introduction of the vectorized loads did help to achieve more efficient memory transfers for low to mid-range. 
+But the real problem is that the uncoalesced memory alignment of the weight array. This is not solved by the vectorized loads. To achieve a more optimized version, the matrix needs to be transposed. Thus enabling consecutive threads to access consecutive weights. 
+At the end, this solution was not implemented to stay on topic.
+
+Another optimization point would be introducing sparsity. Could enable more optimized memory access, changing the $O(N^2)$ to $O(E)$, where E is the number of non-zero synaptic connections. But I did not implemented because of the complexity it would bring, and it is off-topic.
+
+\subsection{Related Works}
+
+CARLsim6 \cite{niedermeier2022carlsim}, and GeNN \cite{yavuz2016genn} are some of the most popular GPU-accelerated simulators.
+The current state of this work is well below what those simulators are achieving, but still a solid proof-of-concept.
+
+The CARLsim6 is a biologically detailed and large-scale SNN simulator, which is being used in biologically plausible simulations.
+It provides a C/C++ API, with it user can manage neuron groups and the connectivity patterns. 
+This makes it highly generic and can be used on the majority of the GPUs.
+
+The GeNN is taking another approach; instead of giving a run-time framework, it provides a code generation tool.
+The user supplies the parameters and the model definitions, and the generator outputs an optimized code for the specific GPU.
+Their results show a speed-up of up to 200x. 
+
+When analyzing the related works, 
+It is apparent that they are highly generic, even though their approach is different.
+
+My work shows a solid proof-of-concept. 
+For future work, the simulator can be more generic.
+By using the proven optimization techniques given in the report, a Python code generator script can be implemented. 
+The code generator can take the parameters (weights, connectivity, etc.) and generate an optimized code. 
+The GeNN is not specific to Spiking Neural Networks, so optimizations can exploit this specificity. 
+
+
+The NIR (Neuromorphic Intermediate Representation) \cite{pedersen2024neuromorphic} 
+It is an open-source standard and graph-based format that can provide a graph with the needed neuron parameters. 
+Thus, while feeding the parameters into the code-generator script, the NIR can be used.
+
+
+
+\bibliographystyle{unsrt} % Styles: plain, unsrt, alpha, etc.
 \bibliography{references}
 \end{document}
