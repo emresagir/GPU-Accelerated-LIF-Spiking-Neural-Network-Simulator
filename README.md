@@ -25,7 +25,6 @@ optimized_gpu_version/  Optimized CUDA implementation (fused kernel, tiling, vec
 profiling_basic/        Nsight Systems profiling output (basic GPU)
 profiling_optimized/    Nsight Systems profiling output (optimized GPU)
 plotting/               Scripts for correctness and performance plots
-report/                 Project proposal and report sources
 report_ieee_v/          Final IEEE-format report, slides, and figures
 ```
 
